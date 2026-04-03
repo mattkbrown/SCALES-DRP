@@ -12,7 +12,10 @@ from scipy.sparse import load_npz
 import scipy.sparse as sp
 from astropy.nddata import CCDData
 import astropy.units as u
-from scipy.optimize import lsq_linear 
+from scipy.optimize import lsq_linear
+from cupyx.scipy.sparse import csr_matrix as gpu_csr_matrix
+import cupy as cp
+from cupyx.scipy.sparse.linalg import lsmr as gpu_lsmr
 import time
 from astropy.nddata import StdDevUncertainty
 from astropy.coordinates import Angle
@@ -111,20 +114,25 @@ class SpectralExtract(BasePrimitive):
         total_variance = read_noise_variance_vector + photon_noise_variance
         total_variance[total_variance <= 0] = 1e-9
         weights = 1.0 / np.sqrt(total_variance)
+        guess = cp.asarray(A_guess)
         W = sp.diags(weights, format='csr')
         R_prime = W @ R_matrix
+        R_prime_gpu = gpu_csr_matrix(R_prime)
         d_prime = W @ data_vector
+        d_prime_gpu = cp.asarray(d_prime)
         lower_bounds = 0
         upper_bounds = np.maximum(0, A_guess) * bound_factor
         upper_bounds += 1e-9 
-        bounds = (lower_bounds, upper_bounds)
+        #bounds = (lower_bounds, upper_bounds)
         start_time = time.time()
-        lsq_options = {'tol': tolerance, 'verbose': 0}
-        res = lsq_linear(R_prime, d_prime, bounds=bounds, **lsq_options) 
+        #lsq_options = {'tol': tolerance, 'verbose': 0}
+        #res = lsq_linear(R_prime, d_prime, bounds=bounds, **lsq_options) 
+        x,_,_,_,_,_,_,_ = gpu_lsmr(R_prime_gpu, d_prime_gpu, x0=guess, atol=1e-8, btol=1e-8)
+        x = cp.clip(x, lower_bounds, upper_bounds)
         end_time = time.time()
         t = (end_time - start_time)/60.0
-        self.logger.info(f"Bounded lsq_linear finished in {t:.4f} mins.")
-        return res.x
+        self.logger.info(f"Bounded lsmr finished in {t:.4f} mins.")
+        return cp.asnumpy(x)
 
     ############### chi sqaure error estimation #########################
 

@@ -13,6 +13,7 @@ from keckdrpframework.pipelines.base_pipeline import BasePipeline
 from keckdrpframework.models.processing_context import ProcessingContext
 from scalesdrp.primitives.scales_file_primitives import *
 
+from datetime import datetime
 
 class Scales_pipeline(BasePipeline):
     """
@@ -73,6 +74,8 @@ class Scales_pipeline(BasePipeline):
                 "******* FILE TYPE is NOT determined. "
                 "No processing is possible.")
             return False
+
+        action.args.ingest_time = datetime.utcnow()
 
         camera = action.args.ccddata.header['CAMERA'].upper()
         self.context.pipeline_logger.info("******* Observing MODE is %s " % camera)

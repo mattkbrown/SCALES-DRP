@@ -37,6 +37,7 @@ matplotlib       = ">=3.9.2,<3.10.0"
 ref_index        = ">=1.0,<2.0"
 pyregion         = ">=2.0,<3.0"
 tqdm             = ">=4.67.3"
+cupy             = ">=13.6.0"
 
 [tool.poetry.scripts]
 start_scales_reduce    = "scalesdrp.scripts.reduce_scales:main"

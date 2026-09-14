@@ -1,0 +1,261 @@
+from keckdrpframework.primitives.base_primitive import BasePrimitive
+from scalesdrp.primitives.scales_file_primitives import scales_fits_writer
+
+import numpy as np
+import pickle
+from astropy.io import fits
+import warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+import pandas as pd
+from scipy.optimize import minimize
+from scipy.sparse import load_npz
+import scipy.sparse as sp
+from astropy.nddata import CCDData
+import astropy.units as u
+from scipy.optimize import lsq_linear
+import time
+from astropy.nddata import StdDevUncertainty
+from astropy.coordinates import Angle
+from astropy.wcs import WCS
+import os
+import scalesdrp.primitives.scales_basic as scbasic
+from scalesdrp.core.scales_proctab import Proctab
+from scalesdrp.core.scales_pkg_resources import get_resource_path
+import logging
+log = logging.getLogger("SCALES")
+pt = Proctab(logger=log)
+
+class SpectralExtractChi(BasePrimitive):
+    """
+	This primitive will perform spectral cube extraction using Optimal extraction and
+    optional chi square extraction method. A linear WCS informations are updated to the
+    the final output header.
+    Args:
+        data_image: The (H,W) input slope image & uncertainty.
+
+    Returns:
+        A 3D cube with two spatial and one spectral dimension
+        A 3D uncertainty cube
+    """
+
+    def __init__(self, action, context):
+        BasePrimitive.__init__(self, action, context)
+        self.logger = context.pipeline_logger
+
+        if not hasattr(self, "proctab") or self.proctab is None:
+            self.proctab = Proctab(logger=self.logger if hasattr(self, "logger") else logging.getLogger("SCALES"))
+
+
+    def _perform(self):
+
+        obsmode = self.action.args.ccddata.header['CAMERA']
+
+        if obsmode=='IFS':
+            SCALES_CENTER_MAP = {
+                'LowRes-KLM': (54, 54),
+                'LowRes-K': (50, 60),
+                'LowRes-L': (50, 60),
+                'LowRes-M': (50, 60),
+                'LowRes-KL': (50, 60),
+                'LowRes-Ls': (50, 60),
+                'MedRes-K': (50, 60),
+                'MedRes-L': (50, 60),
+                'MedRes-M': (50, 60),}
+
+            SCALES_DEFAULT_CENTER = (54, 54)
+            package = __name__.split('.')[0]
+            calibfilepath = self.context.calib_file_path
+            calib_path = str(get_resource_path(package, calibfilepath))+'/'
+            det_config = self.action.args.ccddata.header['MCLOCK']
+            package = __name__.split('.')[0]
+            det_config = str(det_config).strip()
+            modslnam = self.action.args.ccddata.header['MODSLNAM']
+            dsprsnam = self.action.args.ccddata.header['DSPRSNAM']
+            ifsmode = scbasic.select_ifsmode(modslnam,dsprsnam)
+            filename = self.action.args.ccddata.header.get("OFNAME")
+
+            if det_config =='5.0 MHz':  #fast1.0
+                readnoise = fits.getdata(calib_path+self.context.sig_map_ifs_fast1)
+
+            elif det_config =='9.0 MHz': #fast1.0
+                readnoise  = fits.getdata(calib_path+self.context.sig_map_ifs_fast0p6)
+
+            elif det_config =='20.0 MHz': #slow
+                readnoise = fits.getdata(calib_path+self.context.sig_map_ifs_slow)
+
+            else: #default
+                readnoise = fits.getdata(calib_path+self.context.sig_map_ifs_fast0p6)
+
+            sigma_image = self.action.args.ccddata.uncertainty
+            var_read_vector = (sigma_image.array.flatten().astype(np.float64))**2+(readnoise.flatten().astype(np.float64))**2
+            GAIN = 1.0#self.action.args.ccddata.header['GAIN']
+            data_image = self.action.args.ccddata.data
+            data_vector_d = data_image.flatten().astype(np.float64)
+
+            if ifsmode=='LowRes-K':
+                rmat_opt = self.context.OPT_rmat_LowRes_K
+                rmat_chi = self.context.OPT_rmat_LowRes_K
+                R_for_extract = load_npz(calib_path+rmat_chi)
+                R_matrix = load_npz(calib_path+rmat_opt)
+                FLUX_SHAPE_3D = self.context.lowres_final_cube
+            elif ifsmode=='LowRes-L':
+                rmat_opt = self.context.OPT_rmat_LowRes_L
+                rmat_chi = self.context.C2_rmat_LowRes_L
+                R_for_extract = load_npz(calib_path+rmat_chi)
+                R_matrix = load_npz(calib_path+rmat_opt)
+                FLUX_SHAPE_3D = self.context.lowres_final_cube
+            elif ifsmode=='LowRes-M':
+                rmat_chi = self.context.C2_rmat_LowRes_M
+                rmat_opt = self.context.OPT_rmat_LowRes_M
+                R_for_extract = load_npz(calib_path+rmat_chi)
+                R_matrix = load_npz(calib_path+rmat_opt)
+                FLUX_SHAPE_3D = self.context.lowres_final_cube
+            elif ifsmode=='LowRes-KLM':
+                rmat_opt = self.context.OPT_rmat_LowRes_KLM
+                rmat_chi = self.context.C2_rmat_LowRes_KLM
+                R_for_extract = load_npz(calib_path+rmat_chi)
+                R_matrix = load_npz(calib_path+rmat_opt)
+                FLUX_SHAPE_3D = self.context.lowres_final_cube
+            elif ifsmode=='LowRes-KL':
+                rmat_opt = self.context.OPT_rmat_LowRes_KL
+                rmat_chi = self.context.C2_rmat_LowRes_KL
+                R_for_extract = load_npz(calib_path+rmat_chi)
+                R_matrix = load_npz(calib_path+rmat_opt)
+                FLUX_SHAPE_3D = self.context.lowres_final_cube
+            elif ifsmode=='LowRes-Ls':
+                rmat_opt = self.context.OPT_rmat_LowRes_Ls
+                rmat_chi = self.context.C2_rmat_LowRes_Ls
+                R_for_extract = load_npz(calib_path+rmat_chi)
+                R_matrix = load_npz(calib_path+rmat_opt)
+                FLUX_SHAPE_3D = self.context.lowres_final_cube
+            elif ifsmode=='MedRes-K':
+                rmat_opt = self.context.OPT_rmat_MedRes_K
+                rmat_chi = self.context.C2_rmat_MedRes_K
+                R_for_extract = load_npz(calib_path+rmat_chi)
+                R_matrix = load_npz(calib_path+rmat_opt)
+                FLUX_SHAPE_3D = self.context.medres_final_cube
+            elif ifsmode=='MedRes-L':
+                rmat_opt = self.context.OPT_rmat_MedRes_L
+                rmat_chi =self.context.C2_rmat_MedRes_L
+                R_for_extract = load_npz(calib_path+rmat_chi)
+                R_matrix = load_npz(calib_path+rmat_opt)
+                FLUX_SHAPE_3D = self.context.medres_final_cube
+            elif ifsmode=='MedRes-M':
+                rmat_opt =self.context.OPT_rmat_MedRes_M
+                rmat_chi = self.context.C2_rmat_MedRes_M
+                R_for_extract = load_npz(calib_path+rmat_chi)
+                R_matrix = load_npz(calib_path+rmat_opt)
+                FLUX_SHAPE_3D = self.context.medres_final_cube
+
+            existing_l1_name = scbasic.find_existing_proc_file(
+                input_filename=filename,
+                suffix="_chi_L2",
+                redux_dir=self.config.instrument.output_directory)
+
+            if existing_l1_name is not None:
+                l1_path = os.path.join(
+                    self.config.instrument.output_directory,
+                    os.path.basename(existing_l1_name))
+            else:
+                l1_path = scbasic.get_l2_path_from_raw(
+                    input_filename = filename,
+                    output_dir = self.config.instrument.output_directory)
+
+            if self.config.instrument.clobber==False:
+                if os.path.exists(l1_path):
+                    self.logger.info(f"Found existing L2 file: {l1_path}")
+                    try:
+                        l1_slope, l1_uncert, l1_header = scbasic.read_existing_l2(l1_path)
+                        self.action.args.ccddata.data = l1_slope
+                        self.action.args.ccddata.header = l1_header
+                        self.action.args.ccddata.uncertainty = StdDevUncertainty(l1_uncert)
+
+                        self.logger.info(f"Reusing existing L2 for {filename}. Skipping raw processing.")
+
+                        return self.action.args
+
+                    except Exception as e:
+                        self.logger.warning(
+                                    f"Existing L2 file could not be used: {l1_path}. "
+                                    f"Reason: {e}. Reprocessing from raw file.")
+
+            A_guess_cube,A_guess_cube_err = scbasic.optimal_extract_horne(
+                R_matrix,
+                data_image,
+                sigma_image)
+
+            A_opt = A_guess_cube.reshape(FLUX_SHAPE_3D)
+            A_opt_err = A_guess_cube_err.reshape(FLUX_SHAPE_3D)
+            
+            if self.config.instrument.do_chi2_full == True:
+                
+                A_guess_vector = A_guess_cube.flatten()
+                A_opt = A_guess_cube.reshape(FLUX_SHAPE_3D)
+                A_opt_err = A_guess_cube_err.reshape(FLUX_SHAPE_3D)
+                
+                A_optimal_nnls = scbasic.solve_bounded_weighted_nnls(
+                    R_for_extract,
+                    data_vector_d,
+                    var_read_vector,
+                    GAIN,
+                    A_guess_vector)
+                
+                Amp_chi_square = A_optimal_nnls.reshape(FLUX_SHAPE_3D)
+                
+                Amp_chi_square_err = scbasic.calculate_error_flux_cube(
+                    R_matrix=R_for_extract,
+                    flux_vector_A=A_optimal_nnls,
+                    var_read_vector=var_read_vector,
+                    flux_shape_3d=FLUX_SHAPE_3D,
+                    gain=GAIN)
+
+                if self.config.instrument.apply_lens_flat == True:
+                    
+                    Amp_chi_square, Amp_chi_square_err = scbasic.apply_flatlens(
+                        Amp_chi_square,
+                        Amp_chi_square_err,
+                        norm_flatlens,
+                        norm_flatlens_uncert,
+                        imtype='FLATLENS')
+
+                wcs, wave_info = scbasic.create_scales_wcs(
+                    cube_shape=Amp_chi_square.shape,
+                    header=self.action.args.ccddata.header)
+
+                final_header = scbasic.wcs_header_update(
+                    data_cube=Amp_chi_square,
+                    input_header=self.action.args.ccddata.header,
+                    wcs=wcs,
+                    wave_info=wave_info)
+
+                self.action.args.ccddata.header['HISTORY'] = (f'chi_square extraction performed using {os.path.basename(rmat_chi)}')
+                self.action.args.ccddata.header['HISTORY'] = 'WCS keywords updated (purely linear).'
+
+                chi_rslt = CCDData(
+                    data=Amp_chi_square,
+                    uncertainty=StdDevUncertainty(Amp_chi_square_err),
+                    meta=self.action.args.ccddata.header,
+                    unit='adu')
+
+                scales_fits_writer(ccddata = chi_rslt,
+                    table=self.action.args.table,
+                    output_file=self.action.args.name,
+                    output_dir=self.config.instrument.output_directory,
+                    suffix="chi_L2")
+
+                scbasic.proctab_update(
+                    header=self.action.args.ccddata.header,
+                    output_dir=self.config.instrument.output_directory,
+                    input_filename=self.action.args.name,
+                    suffix="_chi_L2",
+                    frame=None,
+                    proctab=self.proctab)
+
+            
+            log_string = SpectralExtractChi.__module__
+            self.action.args.ccddata.header['HISTORY'] = log_string
+            self.logger.info(log_string)
+
+
+        return self.action.args
+    # END: class SpectralExtractChi()

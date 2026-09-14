@@ -334,6 +334,10 @@ def main():
     framework.context.apply_det_flat = scales_config.apply_det_flat
     framework.context.apply_bias = scales_config.apply_bias
     framework.context.apply_lens_flat = scales_config.apply_lens_flat
+    framework.context.lowres_final_cube = scales_config.lowres_final_cube
+    framework.context.medres_final_cube = scales_config.medres_final_cube
+
+
     # implement the group mode
     if args.group_mode is True:
         data_set = framework.context.data_set

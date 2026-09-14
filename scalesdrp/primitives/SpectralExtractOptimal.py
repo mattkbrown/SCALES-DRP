@@ -12,7 +12,6 @@ from scipy.sparse import load_npz
 import scipy.sparse as sp
 from astropy.nddata import CCDData
 import astropy.units as u
-from scipy.optimize import lsq_linear
 import time
 from astropy.nddata import StdDevUncertainty
 from astropy.coordinates import Angle
@@ -25,7 +24,7 @@ import logging
 log = logging.getLogger("SCALES")
 pt = Proctab(logger=log)
 
-class SpectralExtract(BasePrimitive):
+class SpectralExtractOptimal(BasePrimitive):
     """
 	This primitive will perform spectral cube extraction using Optimal extraction and
     optional chi square extraction method. A linear WCS informations are updated to the
@@ -90,62 +89,43 @@ class SpectralExtract(BasePrimitive):
             var_read_vector = (sigma_image.array.flatten().astype(np.float64))**2+(readnoise.flatten().astype(np.float64))**2
             GAIN = 1.0#self.action.args.ccddata.header['GAIN']
             data_image = self.action.args.ccddata.data
-            data_vector_d = data_image.flatten().astype(np.float64)
 
             if ifsmode=='LowRes-K':
                 rmat_opt = self.context.OPT_rmat_LowRes_K
-                rmat_chi = self.context.OPT_rmat_LowRes_K
-                R_for_extract = load_npz(calib_path+rmat_chi)
                 R_matrix = load_npz(calib_path+rmat_opt)
-                FLUX_SHAPE_3D = (54, 112, 112)
+                FLUX_SHAPE_3D = self.context.lowres_final_cube
             elif ifsmode=='LowRes-L':
                 rmat_opt = self.context.OPT_rmat_LowRes_L
-                rmat_chi = self.context.C2_rmat_LowRes_L
-                R_for_extract = load_npz(calib_path+rmat_chi)
                 R_matrix = load_npz(calib_path+rmat_opt)
-                FLUX_SHAPE_3D = (54, 112, 112)
+                FLUX_SHAPE_3D = self.context.lowres_final_cube
             elif ifsmode=='LowRes-M':
-                rmat_chi = self.context.C2_rmat_LowRes_M
                 rmat_opt = self.context.OPT_rmat_LowRes_M
-                R_for_extract = load_npz(calib_path+rmat_chi)
                 R_matrix = load_npz(calib_path+rmat_opt)
-                FLUX_SHAPE_3D = (54, 112, 112)
+                FLUX_SHAPE_3D = self.context.lowres_final_cube
             elif ifsmode=='LowRes-KLM':
                 rmat_opt = self.context.OPT_rmat_LowRes_KLM
-                rmat_chi = self.context.C2_rmat_LowRes_KLM
-                R_for_extract = load_npz(calib_path+rmat_chi)
                 R_matrix = load_npz(calib_path+rmat_opt)
-                FLUX_SHAPE_3D = (54, 112, 112)
+                FLUX_SHAPE_3D = self.context.lowres_final_cube
             elif ifsmode=='LowRes-KL':
                 rmat_opt = self.context.OPT_rmat_LowRes_KL
-                rmat_chi = self.context.C2_rmat_LowRes_KL
-                R_for_extract = load_npz(calib_path+rmat_chi)
                 R_matrix = load_npz(calib_path+rmat_opt)
-                FLUX_SHAPE_3D = (54, 112, 112)
+                FLUX_SHAPE_3D = self.context.lowres_final_cube
             elif ifsmode=='LowRes-Ls':
                 rmat_opt = self.context.OPT_rmat_LowRes_Ls
-                rmat_chi = self.context.C2_rmat_LowRes_Ls
-                R_for_extract = load_npz(calib_path+rmat_chi)
                 R_matrix = load_npz(calib_path+rmat_opt)
-                FLUX_SHAPE_3D = (54, 112, 112)
+                FLUX_SHAPE_3D = self.context.lowres_final_cube
             elif ifsmode=='MedRes-K':
                 rmat_opt = self.context.OPT_rmat_MedRes_K
-                rmat_chi = self.context.C2_rmat_MedRes_K
-                R_for_extract = load_npz(calib_path+rmat_chi)
                 R_matrix = load_npz(calib_path+rmat_opt)
-                FLUX_SHAPE_3D = (1900, 17, 18)
+                FLUX_SHAPE_3D = self.context.medres_final_cube
             elif ifsmode=='MedRes-L':
                 rmat_opt = self.context.OPT_rmat_MedRes_L
-                rmat_chi =self.context.C2_rmat_MedRes_L
-                R_for_extract = load_npz(calib_path+rmat_chi)
                 R_matrix = load_npz(calib_path+rmat_opt)
-                FLUX_SHAPE_3D = (1900, 17, 18)
+                FLUX_SHAPE_3D = self.context.medres_final_cube
             elif ifsmode=='MedRes-M':
                 rmat_opt =self.context.OPT_rmat_MedRes_M
-                rmat_chi = self.context.C2_rmat_MedRes_M
-                R_for_extract = load_npz(calib_path+rmat_chi)
                 R_matrix = load_npz(calib_path+rmat_opt)
-                FLUX_SHAPE_3D = (1900, 17, 18)
+                FLUX_SHAPE_3D = self.context.medres_final_cube
 
             existing_l1_name = scbasic.find_existing_proc_file(
                 input_filename=filename,
@@ -203,6 +183,8 @@ class SpectralExtract(BasePrimitive):
                 cube_shape=A_opt.shape,
                 header=self.action.args.ccddata.header)
 
+            header_copy = self.action.args.ccddata.header
+            
             final_header = scbasic.wcs_header_update(
                 data_cube=A_opt,
                 input_header=self.action.args.ccddata.header,
@@ -219,6 +201,7 @@ class SpectralExtract(BasePrimitive):
             self.action.args.ccddata.header.update(final_header)
             self.action.args.ccddata.header['HISTORY'] = 'WCS keywords updated (purely linear).'
             self.action.args.ccddata.header['HISTORY'] = (f'Optimal extraction performed using {os.path.basename(rmat_opt)}')
+            
             scales_fits_writer(ccddata = opt_rslt,
                 table=self.action.args.table,
                 output_file=self.action.args.name,
@@ -233,56 +216,14 @@ class SpectralExtract(BasePrimitive):
                 frame=None,
                 proctab=self.proctab)
             
-            
-            if self.config.instrument.do_chi2_full == True:
-                A_guess_vector = A_guess_cube.flatten()
-                A_opt = A_guess_cube.reshape(FLUX_SHAPE_3D)
-                A_opt_err = A_guess_cube_err.reshape(FLUX_SHAPE_3D)
-                A_optimal_nnls = scbasic.solve_bounded_weighted_nnls(
-                    R_for_extract, data_vector_d, var_read_vector, GAIN, A_guess_vector)
-                Amp_chi_square = A_optimal_nnls.reshape(FLUX_SHAPE_3D)
-                Amp_chi_square_err = scbasic.calculate_error_flux_cube(
-                    R_matrix=R_for_extract,
-                    flux_vector_A=A_optimal_nnls,
-                    var_read_vector=var_read_vector,
-                    flux_shape_3d=FLUX_SHAPE_3D,
-                    gain=GAIN)
+            self.action.args.ccddata.data = data_image
+            self.action.args.ccddata.header = header_copy
+            self.action.args.ccddata.uncertainty = sigma_image
 
-                if self.config.instrument.apply_lens_flat == True:
-                    
-                    Amp_chi_square, Amp_chi_square_err = scbasic.apply_flatlens(
-                        Amp_chi_square,
-                        Amp_chi_square_err,
-                        norm_flatlens,
-                        norm_flatlens_uncert,
-                        imtype='FLATLENS')
-
-                self.action.args.ccddata.header['HISTORY'] = (f'chi_square extraction performed using {os.path.basename(rmat_chi)}')
-                chi_rslt = CCDData(
-                    data=Amp_chi_square,
-                    uncertainty=StdDevUncertainty(Amp_chi_square_err),
-                    meta=self.action.args.ccddata.header,
-                    unit='adu')
-
-                scales_fits_writer(ccddata = chi_rslt,
-                    table=self.action.args.table,
-                    output_file=self.action.args.name,
-                    output_dir=self.config.instrument.output_directory,
-                    suffix="chi_L2")
-
-                scbasic.proctab_update(
-                    header=self.action.args.ccddata.header,
-                    output_dir=self.config.instrument.output_directory,
-                    input_filename=self.action.args.name,
-                    suffix="_chi_L2",
-                    frame=None,
-                    proctab=self.proctab)
-
-            
-            log_string = SpectralExtract.__module__
+            log_string = SpectralExtractOptimal.__module__
             self.action.args.ccddata.header['HISTORY'] = log_string
             self.logger.info(log_string)
 
 
         return self.action.args
-    # END: class LeastExtract()
+    # END: class SpectralExtractOptimal()

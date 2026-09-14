@@ -49,10 +49,13 @@ class Scales_pipeline(BasePipeline):
                                       "dark_flat_correct"),
         "dark_flat_correct":         ("CalibCorrect",
                                       "dark_flat_correction_started",
-                                      "spectral_extract"),
-        "spectral_extract":          ("SpectralExtract",
-                                      "Spectral Extraction started",
-                                      None),
+                                      "spectral_extract_optimal"),
+        "spectral_extract_optimal":  ("SpectralExtractOptimal",
+                                      "Optimal Extraction started",
+                                      "spectral_extract_chi"),
+        "spectral_extract_chi":      ("SpectralExtractChi",
+                                      "Chi square extraction started",
+                                       None),
 
         "next_file_stop":            ("ingest_file", "file_ingested", None)
     }

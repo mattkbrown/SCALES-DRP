@@ -1,11 +1,9 @@
 import os
 import requests
 import time
+from pathlib import Path
 
 from keckdrpframework.primitives.base_primitive import BasePrimitive
-from scalesdrp.primitives.scales_file_primitives import scales_fits_writer, \
-                                                    scales_fits_reader, \
-                                                    strip_fname
 
 
 class SendHTTP(BasePrimitive):
@@ -31,7 +29,7 @@ class SendHTTP(BasePrimitive):
         data_directory = os.path.join(self.config.instrument.cwd,
                                       self.config.instrument.output_directory)
         
-        self.logger.info(f"Alerting RTI that {strip_fname(self.action.args.name)} is ready for ingestion")
+        self.logger.info(f"Alerting RTI that {Path(self.action.args.name).stem} is ready for ingestion")
 
         url = self.config.rti.rti_url
         data = {

@@ -15,81 +15,6 @@ from importlib.metadata import version, PackageNotFoundError
 
 logger = logging.getLogger('SCALES')
 
-ifs_amp_dict = {'L1': 0, 'L2': 1, 'U1': 2, 'U2': 3}
-# gains for slow readout, high gain
-ifs_amp_gain = {'L1': 1.54, 'L2': 1.551, 'U1': 1.61, 'U2': 1.526}
-
-# gains for slow readout gainmul by ampid
-im_amp_gain = {1:  {0: 1.570, 1: 1.600, 2: 1.610, 3: 1.600},
-                 2:  {0: 0.785, 1: 0.800, 2: 0.805, 3: 0.800},
-                 5:  {0: 0.314, 1: 0.320, 2: 0.325, 3: 0.319},
-                 10: {0: 0.157, 1: 0.160, 2: 0.158, 3: 0.158}}
-
-
-def parse_imsec(section=None):
-    """
-    Parse image section FITS header keyword into useful tuples.
-
-    Take into account one-biased IRAF-style image section keywords and the
-    possibility that a third element (strid) may be present and generate the
-    x and y limits as well as the stride for each axis that are useful for
-    python image slices.
-
-    Args:
-        section (str): square-bracket enclosed string with colon range
-        specifiers and comma delimiters.
-
-    :returns:
-        - list: (int) y0, y1, x0, x1 - zero-biased (python) slice limits.
-        - list: (int) y-stride, x-stride - strides for each axis.
-
-    """
-    xsec = section[1:-1].split(',')[0]
-    ysec = section[1:-1].split(',')[1]
-    xparts = xsec.split(':')
-    yparts = ysec.split(':')
-    p1 = int(xparts[0])
-    p2 = int(xparts[1])
-    p3 = int(yparts[0])
-    p4 = int(yparts[1])
-    # check for scale factor
-    if len(xparts) == 3:
-        xstride = int(xparts[2])
-    else:
-        xstride = 1
-    if len(yparts) == 3:
-        ystride = int(yparts[2])
-    else:
-        ystride = 1
-    # is x axis in descending order?
-    if p1 > p2:
-        x0 = p2 - 1
-        x1 = p1 - 1
-        xstride = -abs(xstride)
-    # x axis in ascending order
-    else:
-        x0 = p1 - 1
-        x1 = p2 - 1
-    # is y axis in descending order
-    if p3 > p4:
-        y0 = p4 - 1
-        y1 = p3 - 1
-        ystride = -abs(ystride)
-    # y axis in ascending order
-    else:
-        y0 = p3 - 1
-        y1 = p4 - 1
-    # ensure no negative indices
-    if x0 < 0:
-        x0 = 0
-    if y0 < 0:
-        y0 = 0
-    # package output with python axis ordering
-    sec = (y0, y1, x0, x1)
-    stride = (ystride, xstride)
-
-    return sec, stride
-
 class KCCDData(CCDData):
     """
     A container for SCALES images based on the CCDData object that adds
@@ -213,250 +138,6 @@ class ingest_file(BasePrimitive):
         """Returns value of `AMPMODE` FITS header keyword."""
         return self.get_keyword('AMPMODE')
 
-    def xbinsize(self):
-        """Return X part of `BINNING` keyword value as (int)."""
-        return int(self.get_keyword('BINNING').split(',')[0])
-
-    def ybinsize(self):
-        """Return Y part of `BINNING` keyword value as (int)."""
-        return int(self.get_keyword('BINNING').split(',')[-1])
-
-
-    def ifuname(self):
-        """Return the value of the `IFUNAM` FITS header keyword."""
-        return self.get_keyword('IFUNAM')
-
-    def ifunum(self):
-        """Return the value of the `IFUNUM` FITS header keyword."""
-        return self.get_keyword('IFUNUM')
-
-    def imtype(self):
-        """Return the value of the `IMTYPE` FITS header keyword."""
-        return self.get_keyword('IMTYPE')
-
-    def illum(self):
-        """
-        Generate a string that characterizes the illumination for the frame.
-
-        Uses various FITS header keywords to determine the kind of illumination
-        that was used for the frame.  If a consistent picture of the
-        illumination cannot be determined, set the return value to `Test`.
-
-        Returns:
-            (str): Characterization of illumination for given frame.
-
-        """
-        # ARCS
-        if self.get_keyword('IMTYPE') == 'ARCLAMP':
-            if self.get_keyword('LMP0STAT') == 1 and \
-                    self.get_keyword('LMP0SHST') == 1:
-                illum = self.get_keyword('LMP0NAM')
-            elif self.get_keyword('LMP1STAT') == 1 and \
-                    self.get_keyword('LMP1SHST') == 1:
-                illum = self.get_keyword('LMP1NAM')
-            else:
-                illum = 'Test'
-        # Internal FLATS
-        elif self.get_keyword('IMTYPE') == 'FLATLAMP':
-            if self.get_keyword('LMP3STAT') == 1:
-                illum = 'Contin'
-            else:
-                illum = 'Test'
-        # DOMES
-        elif self.get_keyword('IMTYPE') == 'DOMEFLAT':
-            if self.get_keyword('FLIMAGIN') == 'on' or \
-                    self.get_keyword('FLSPECTR') == 'on':
-                illum = 'Dome'
-            else:
-                illum = 'Test'
-        # Twilight FLATS
-        elif self.get_keyword('IMTYPE') == 'TWIFLAT':
-            illum = 'Twilit'
-        # BARS
-        elif self.get_keyword('IMTYPE') == 'CONTBARS':
-            if self.get_keyword('LMP3STAT') == 1:
-                illum = 'Contin'
-            else:
-                illum = 'Test'
-        # OBJECT
-        elif self.get_keyword('IMTYPE') == 'OBJECT':
-            obnam = self.get_keyword('OBJECT')
-            if obnam is None:
-                obnam = self.get_keyword('TARGNAME')
-                if obnam is None:
-                    obnam = 'Object'
-            # clean up the string
-            illum = obnam.replace("/", "_").replace(" ", "").replace(".", "_")
-        else:
-            illum = 'Test'
-        return illum
-
-    def calibration_lamp(self):
-        """
-        Determine which calibration source was used for a given frame.
-
-        Examines `LMPnSTAT` and `LMPnSHST` keywords to determine which lamp was
-        on and which shutter was open and thus providing illuminate for the
-        frame.  Returns ``None`` if not an `ARCLAMP` image type.
-
-        Returns:
-            (str, or ``None``): Which calibration lamp was active for frame.
-
-        """
-        if self.get_keyword('IMTYPE') != 'ARCLAMP':
-            return None
-        else:
-            lamps_dictionary = {
-                0: "FeAr",
-                1: "ThAr",
-                2: "Aux",
-                3: "Continuum A"
-            }
-            for key in lamps_dictionary.keys():
-                status = self.get_keyword('LMP%dSTAT' % key)
-                shutter = self.get_keyword('LMP%dSHST' % key)
-                if status == 1 and shutter == 1:
-                    return lamps_dictionary[key]
-
-    def map_ccd(self, xbin, ybin):
-        """
-        Return CCD section variables useful for processing
-
-        Args:
-            xbin (int): binning in x
-            ybin (int): binning in y
-
-        Uses FITS keyword NVIDINP to determine how many amplifiers were used
-        to read out the CCD.  Then reads the corresponding BSECn, and
-        DSECn keywords, where n is the amplifier number.  The indices are
-        converted to Python (0-biased, y axis first) indices and an array
-        is constructed for each of the two useful sections of the CCD as
-        follows:
-
-        * Bsec[0][0] - First amp, y lower limit
-        * Bsec[0][1] - First amp, y upper limit
-        * Bsec[0][2] - First amp, x lower limit
-        * Bsec[0][3] - First amp, x upper limit
-        * Bsec[1][0] - Second amp, y lower limit
-        * etc.
-
-        Bsec is the full overscan region for the given amplifier and is used
-        to calculate and perform the overscan subtraction.
-
-        Dsec is the full CCD region for the given amplifier and is used to
-        trim the image after overscan subtraction has been performed.
-
-        Tsec accounts for trimming the image according to Dsec.
-
-        Amps are assumed to be organized as follows:
-
-        .. code-block:: text
-
-                      BLUE                          RED
-            (0,ny)  --------- (nx,ny)    (0,ny)  --------- (nx,ny)
-                    | 2 | 3 |                    | 0 | 2 |
-                    ---------                    ---------
-                    | 0 | 1 |                    | 1 | 3 |
-            (0,0)   --------- (nx, 0)    (0,0)   --------- (nx, 0)
-
-        :returns:
-            - list: (int) y0, y1, x0, x1 for bias section
-            - list: (int) y0, y1, x0, x1 for data section
-            - list: (int) y0, y1, x0, x1 for trimmed section
-            - list: (bool) y-direction, x-direction, True if forward, else False
-
-        """
-
-        namps = self.namps()    # int(self.get_keyword('NVIDINP'))
-        # TODO: check namps
-        camera = self.get_keyword('CAMERA').upper()
-        ampmode = self.get_keyword('AMPMODE')
-        # section lists
-        bsec = []
-        dsec = []
-        tsec = []
-        strides = []
-        amps = []
-        if 'Im' in camera:
-            nb = 1    # numbering bias (0 or 1)
-            # loop over amps
-            for i in range(namps):
-                ia = i + 1
-                amps.append(ia)
-                section = self.get_keyword('BSEC%d' % ia)
-                sec, stride = parse_imsec(section)
-                bsec.append(sec)
-                section = self.get_keyword('DSEC%d' % ia)
-                sec, stride = parse_imsec(section)
-                dsec.append(sec)
-                section = self.get_keyword('CSEC%d' % ia)
-                sec, stride = parse_imsec(section)
-                strides.append(stride)
-                if i == 0:
-                    y0 = 0
-                    y1 = int((sec[1] - sec[0]) / ybin)-8
-                    x0 = 0
-                    x1 = int((sec[3] - sec[2]) / xbin)
-                elif i == 1:
-                    y0 = 0
-                    y1 = int((sec[1] - sec[0]) / ybin)-8
-                    x0 = tsec[0][3] + 1
-                    x1 = x0 + int((sec[3] - sec[2]) / xbin)
-                elif i == 2:
-                    y0 = tsec[0][1] + 1
-                    y1 = y0 + int((sec[1] - sec[0]) / ybin)-8
-                    x0 = 0
-                    x1 = int((sec[3] - sec[2]) / xbin)
-                    print(y0,y1,x0,x1)
-                elif i == 3:
-                    y0 = tsec[0][1] + 1
-                    y1 = y0 + int((sec[1] - sec[0]) / ybin)-8
-                    x0 = tsec[0][3] + 1
-                    x1 = x0 + int((sec[3] - sec[2]) / xbin)
-                else:
-                    # should not get here
-                    y0 = -1
-                    y1 = -1
-                    x0 = -1
-                    x1 = -1
-                    # self.log.info("ERROR - bad amp number: %d" % i)
-                tsec.append((y0, y1, x0, x1))
-        elif 'IFS' in camera:
-            nb = 0    # numbering bias (0 or 1)
-            amp_count = 0
-            for amp in red_amp_dict.keys():
-                if amp in ampmode:
-                    amp_count += 1
-                    i = red_amp_dict[amp]
-                    amps.append(i)
-                    section = self.get_keyword('BSEC%d' % i)
-                    sec, stride = parse_imsec(section)
-                    bsec.append(sec)
-                    section = self.get_keyword('DSEC%d' % i)
-                    sec, stride = parse_imsec(section)
-                    dsec.append(sec)
-                    section = self.get_keyword('CSEC%d' % i)
-                    sec, stride = parse_imsec(section)
-                    strides.append(stride)
-                    y0, y1, x0, x1 = sec
-                    y0 = int(y0 / abs(stride[0]))
-                    y1 = int(y1 / abs(stride[0]))
-                    x0 = int(x0 / abs(stride[1]))
-                    x1 = int(x1 / abs(stride[1])) - (abs(stride[1]) - 1)
-                    tsec.append((y0, y1, x0, x1))
-                else:
-                    bsec.append((0, 0, 0, 0))
-                    dsec.append((0, 0, 0, 0))
-                    strides.append((1, 1))
-                    tsec.append((0, 0, 0, 0))
-            if amp_count != namps:
-                self.logger.warning("Didn't get all the amps: %d", amp_count)
-        else:
-            self.logger.warning("Unknown observing mode: %s" % camera)
-            nb = 0
-
-        return bsec, dsec, tsec, strides, amps, nb
-
     def _perform(self):
         # if self.context.data_set is None:
         #    self.context.data_set = DataSet(None, self.logger, self.config,
@@ -532,58 +213,10 @@ class ingest_file(BasePrimitive):
         out_args.groupid = groupid
         # CAMERA
         out_args.camera = self.camera()
-        # DICH
-#        out_args.dich = self.dich()
-        # CAMANGLE
-#        out_args.camangle = self.camang()
-        # FILTER
-#        out_args.filter = self.filter()
-        # GRANGLE
-#        out_args.grangle = self.grangle()
-        # GRATING
-#        out_args.grating = self.grating()
-        # ADJANGLE
-#        out_args.adjang = self.adjang()
-        # RHO
-#        out_args.rho = self.rho()
-        # CWAVE
-#        out_args.cwave = self.cwave()
-        # RESOLUTION
-#        out_args.resolution = self.resolution()
-        # ATSIG
-#        out_args.atsig = self.atsig()
-        # DELTA WAVE OUT
-#        out_args.dwout = self.delta_wave_out()
-        # NAMPS
-#        out_args.namps = self.namps()
-        # NASMASK
-#        out_args.nasmask = self.nasmask()
-        # SHUFROWS
- #       out_args.shufrows = self.shufrows()
-        # NUMOPEN
+
         out_args.numopen = self.numopen()
         # AMPMODE
         out_args.ampmode = self.ampmode()
-        # BINNING
-        #out_args.xbinsize, out_args.ybinsize = \
-        #    map(int, self.get_keyword('BINNING').split(','))
-        # IFUNUM
-        #out_args.ifunum = int(self.get_keyword('IFUNUM'))
-        # IFUNAM
-        #out_args.ifuname = self.get_keyword('IFUNAM')
-        # PLOTLABEL
-        #out_args.plotlabel = self.plotlabel()
-        # STDLABEL
-       # out_args.stdlabel = self.stdlabel()
-        # ILUM
-        #out_args.illum = self.illum()
-        # MAPCCD
-        #out_args.map_ccd = self.map_ccd(out_args.xbinsize, out_args.ybinsize)
-        # CALIBRATION LAMP
-        #out_args.calibration_lamp = self.calibration_lamp()
-        # TTIME
-        #out_args.ttime = self.get_keyword('TTIME')
-
         return out_args
 
     def apply(self):
@@ -619,34 +252,6 @@ class ingest_file(BasePrimitive):
             (bool): ``True`` if processing can proceed, ``False`` if not.
 
         """
-        #if imtype == 'OBJECT':
-            # bias frames
-        #    bias_frames = self.context.proctab.search_proctab(
-        #        frame=self.ccddata, target_type='MBIAS', nearest=True)
-#            # arclamp
-#            arclamp_frames = self.context.proctab.search_proctab(
-#                frame=self.ccddata, target_type='MARC', nearest=True)
-#            # master flats
-#            masterflat_frames = self.context.proctab.search_proctab(
-#                frame=self.ccddata, target_type='MFLAT', nearest=True)
-#            masterdome_frames = self.context.proctab.search_proctab(
-#                frame=self.ccddata, target_type='MDOME', nearest=True)
-#            mastertwif_frames = self.context.proctab.search_proctab(
-#                frame=self.ccddata, target_type='MTWIF', nearest=True)
-
-#            if len(bias_frames) > 0 and len(arclamp_frames) > 0 and (
-#                    len(masterflat_frames) > 0 or len(masterdome_frames) > 0 or
-#                    len(mastertwif_frames) > 0):
-#                return True
-#            else:
-#                self.logger.warn("Cannot reduce OBJECT frame. Found:")
-#                self.logger.warn(f"\tMBIAS: {len(bias_frames)}")
-#                self.logger.warn(f"\tMARC: {len(arclamp_frames)}")
-#                self.logger.warn(f"\tMFLAT: {len(masterflat_frames)}")
-#                self.logger.warn(f"\tMDOME: {len(masterdome_frames)}")
-#                self.logger.warn(f"\tMTWIF: {len(mastertwif_frames)}")
-#
-#                return False
 
         if imtype == 'ARCLAMP':
             # continuum bars
@@ -760,72 +365,7 @@ def scales_fits_reader(file):
         table = None
     # prepare for floating point
     ccddata.data = ccddata.data.astype(np.float64)
-    # Fix red headers
-    #fix_header(ccddata)
-    # Check for CCDCFG keyword
-    #if 'CCDCFG' not in ccddata.header:
-    #    ccdcfg = ccddata.header['CCDSUM'].replace(" ", "")
-    #    ccdcfg += "%1d" % ccddata.header['CCDMODE']
-    #    ccdcfg += "%02d" % ccddata.header['GAINMUL']
-    #    ccdcfg += "%02d" % ccddata.header['AMPMNUM']
-    #    ccddata.header['CCDCFG'] = ccdcfg
-
-    #if ccddata:
-    #    if 'BUNIT' in ccddata.header:
-    #        ccddata.unit = ccddata.header['BUNIT']
-    #        if ccddata.uncertainty:
-    #            ccddata.uncertainty.unit = ccddata.header['BUNIT']
-            # print("setting image units to " + ccddata.header['BUNIT'])
-
-    #logger.info("<<< read %d imgs and %d tables out of %d hdus in %s" %
-    #            (read_imgs, read_tabs, len(hdul), file))
-    #hdul.close()
     return ccddata, table
-
-
-def write_table(output_dir=None, table=None, names=None, comment=None,
-                keywords=None, output_name=None, clobber=False):
-    """
-    Write out FITS table.
-
-    Args:
-        output_dir (str): output directory for table.
-        table (list of arrays): each array in list should have the same size.
-        names (list of str): one for each column in `table`.
-        comment (string): text for FITS COMMENT header record.
-        keywords (FITS keyword dict): for FITS header records.
-        output_name (str): name for output table.
-        clobber (bool): set to to ``True`` to overwrite existing table.
-
-    Raises:
-        FileExistsError: if cannot overwrite file or
-        OSError: if some other access exception occurred.
-
-    """
-    output_file = os.path.join(output_dir, output_name)
-    # check if file already exists
-    if os.path.exists(output_file) and clobber is False:
-        logger.warning("Table %s already exists and overwrite is set to False"
-                       % output_file)
-        return
-    if os.path.exists(output_file) and clobber is True:
-        logger.warning("Table %s already exists and will be overwritten"
-                       % output_file)
-        logger.info("Removing file: %s" % output_file)
-        os.remove(output_file)
-
-    t = Table(table, names=names)
-    if comment:
-        t.meta['COMMENT'] = comment
-    if keywords:
-        for k, v in keywords.items():
-            t.meta[k] = v
-    try:
-        t.write(output_file, format='fits')
-        logger.info("Output table: %s" % output_file)
-    except (FileExistsError, OSError):
-        logger.error("Something went wrong creating the table: "
-                     "table already exists")
 
 
 def read_table(input_dir=None, file_name=None):
@@ -852,7 +392,7 @@ def read_table(input_dir=None, file_name=None):
     return retab
 
 
-def scales_fits_writer(ccddata, table=None, output_file=None, output_dir=None,
+def scales_fits_writer1(ccddata, table=None, output_file=None, output_dir=None,
                      suffix=None):
     """
     A writer for KCCDData or CCDData objects.
@@ -891,7 +431,7 @@ def scales_fits_writer(ccddata, table=None, output_file=None, output_dir=None,
         except PackageNotFoundError:
             ver = "unknown"
         #version = pkg_resources.get_distribution('scalesdrp').version
-        ccddata.header.add_history(f"scalesdrp version={version}")
+        ccddata.header.add_history(f"scalesdrp version={ver}")
 
         # Get string filepath to .git dir, relative to this primitive
         primitive_loc = os.path.dirname(os.path.abspath(__file__))
@@ -926,159 +466,536 @@ def scales_fits_writer(ccddata, table=None, output_file=None, output_dir=None,
         (main_name, extension) = os.path.splitext(out_file)
         out_file = main_name + "_" + suffix + extension
     hdus_to_save = ccddata.to_hdu()
-    # check for flags
-    
-    #flags = getattr(ccddata, "flags", None)
-    #if flags is not None:
-    #    hdus_to_save.append(fits.ImageHDU(flags, name='MORE',
-    #                                      do_not_scale_image_data=True))
-    # check for noskysub
-    #nskysb = getattr(ccddata, "noskysub", None)
+    dq = getattr(ccddata, "dq", None)
+    if dq is not None:
+        dq = np.asarray(dq)
+        if not np.issubdtype(dq.dtype, np.integer):
+            dq = dq.astype(np.uint32)
+        hdu_dq = fits.ImageHDU(
+            dq,
+            name="DQ",
+            do_not_scale_image_data=True)
+        hdu_dq.header["EXTDESC"] = "Data quality bit mask"
+        hdu_dq.header["DQ0"] = "bit 0: no linearity correction"
+        hdu_dq.header["DQ1"] = "bit 1: saturated read"
+        hdu_dq.header["DQ2"] = "bit 2: bad linearity value"
+        hdu_dq.header["DQ3"] = "bit 3: non-monotonic correction"
+        hdu_dq.header["DQ4"] = "bit 4: linearity correction applied"
+        hdus_to_save.append(hdu_dq)
 
-
-    #if nskysb1 is not None:
-    #    if ccddata.noskysub.dtype == np.float64:
-    #        ccddata.noskysub = ccddata.noskysub.astype(np.float32)
-    #    hdus_to_save.append(fits.ImageHDU(nskysb, name='FLUX-LQ'))
-
-
-    # something about the way the original table is written out is wrong
-    # and causes problems.  Leaving it off for now.
-    # if table is not None:
-    #    hdus_to_save.append(table)
-    # log
     logger.info(">>> Saving %d hdus to %s" % (len(hdus_to_save), out_file))
     hdus_to_save.writeto(out_file, overwrite=True)
 
 
-def strip_fname(filename):
+def scales_fits_writer(
+    ccddata,
+    table=None,
+    output_file=None,
+    output_dir=None,
+    suffix=None,
+    quality_map=None,
+    chisq=None,
+):
     """
-    Return pathlib.Path.stem attribute for given filename.
+    Write a KCCDData or CCDData object to a FITS file.
 
-    Args:
-        filename (str): filename to strip.
+    Updates HISTORY in the FITS header with the SCALES-DRP package version,
+    git version, and git date.
 
-    Returns:
-        (str): Path(filename).stem, or filename if error occurs.
+    Float64 science and uncertainty arrays are converted to float32.
 
+    Optionally writes:
+        DQ    : 2-D detector data-quality bit mask
+        CHISQ : 2-D chi-square map from ramp fitting
+
+    Parameters
+    ----------
+    ccddata : KCCDData or CCDData
+        Science data object to write.
+
+    table : FITS Table, optional
+        Currently not used.
+
+    output_file : str
+        Base filename to write.
+
+    output_dir : str
+        Directory into which the FITS file is written.
+
+    suffix : str, optional
+        Suffix appended to the output filename.
+
+    quality_map : ndarray, optional
+        2-D detector data-quality bit mask.
+
+        Expected bit definitions:
+
+            bit 0 : BPM
+            bit 1 : directly saturated during ramp
+            bit 2 : saturated neighbor caused earlier ramp cutoff
+
+        Bits may be combined.
+
+    chisq : ndarray, optional
+        2-D map of chi-square values from ramp fitting.
+        Written as float32 in the CHISQ extension.
+
+    Returns
+    -------
+    None
     """
-    if not filename:
-        logger.error(f"Failed to strip file {filename}")
-        return filename
-    strip = Path(filename).stem
-    return strip
 
+    # ------------------------------------------------------------------
+    # Add pipeline / git version information to HISTORY
+    # ------------------------------------------------------------------
 
-def get_master_name(tab, target_type, loc=0):
-    """
-    Add a specific tag to an output fits filename read from a proc table.
+    history = ccddata.header.get("HISTORY", [])
 
-    Args:
-        tab (proc table): proc table source of filename.
-        target_type (str): suffix to add after underscore.
-        loc (int): row within table in `tab`, defaults to 0.
+    # HISTORY can occasionally be a single string
+    if isinstance(history, str):
+        history = [history]
 
-    Returns:
-        (str): constructed filename from input tab entry and target_type.
+    contains_version = any(
+        "scalesdrp version" in str(h)
+        for h in history
+    )
 
-    """
-    res = Path(strip_fname(tab['filename'][loc]) + '_' +
-               target_type.lower() + ".fits").name
-    return res
+    if not contains_version:
 
+        # Package version
+        try:
+            ver = version("scalesdrp")
+        except PackageNotFoundError:
+            ver = "unknown"
 
-def master_bias_name(ccddata, target_type='MBIAS'):
-    # Currently NOT USED (DN, 7-Sep-2023)
-    # Delivers a mbias filename that is unique for each CCD configuration
-    # Any KCWI frame with a shared CCD configuration can use the same bias
-    name = target_type.lower() + '_' + ccddata.header['CCDCFG'] + '.fits'
-    return name
+        ccddata.header.add_history(f"scalesdrp version={ver}")
 
+        # Find .git directory relative to this primitive
+        primitive_loc = os.path.dirname(os.path.abspath(__file__))
+        git_loc = primitive_loc[:-18] + ".git"
 
-def master_flat_name(ccddata, target_type):
-    # Currently NOT USED (DN, 7-Sep-2023)
-    # Delivers a name that is unique across an observing block
-    name = target_type.lower() + '_' + ccddata.header['STATEID'] + '.fits'
-    return name
+        git1 = subprocess.run(
+            [
+                "git",
+                "--git-dir",
+                git_loc,
+                "describe",
+                "--tags",
+                "--long",
+            ],
+            capture_output=True,
+        )
 
+        git2 = subprocess.run(
+            [
+                "git",
+                "--git-dir",
+                git_loc,
+                "log",
+                "-1",
+                "--format=%cd",
+            ],
+            capture_output=True,
+        )
 
-def fix_header(ccddata):
-    """
-    Fix header keywords for DRP use.
+        if not bool(git1.stderr) and not bool(git2.stderr):
 
-    Update GAINn keywords for Blue channel.
+            git_v = git1.stdout.decode("utf-8").strip()
+            git_d = git2.stdout.decode("utf-8").strip()
 
-    Add FITS header keywords to Red channel data to make compatible with DRP.
+            ccddata.header.add_history(f"git version={git_v}")
+            ccddata.header.add_history(f"git date={git_d}")
 
-    Adds the following keywords that are not present in raw images:
-
-    * MJD - Modified Julian Day (only for AIT data)
-    * NVIDINP - from TAPLINES keyword
-    * GAINMUL - set to 1
-    * CCDMODE - from CDSSPEED keyword
-    * AMPNUM - based on AMPMODE
-    * GAINn - from red_amp_gain dictionary
-
-    """
-    # are we lowres?
-    if 'LOWRES' in ccddata.header['OBSMODE'].upper():
-        gainmul = ccddata.header['GAINMUL']
-        namps = ccddata.header['NVIDINP']
-        for ia in range(namps):
-            ampid = ccddata.header['AMPID%d' % (ia+1)]
-            gain = blue_amp_gain[gainmul][ampid]
-            ccddata.header['GAIN%d' % (ia+1)] = gain
-    # are we medres?
-    elif 'MEDRES' in ccddata.header['OBSMODE'].upper():
-        # Fix red headers during Caltech AIT
-        if 'TELESCOP' not in ccddata.header:
-            # Add DCS keywords
-            ccddata.header['TARGNAME'] = ccddata.header['OBJECT']
-            dateend = ccddata.header['DATE-END']
-            de = datetime.fromisoformat(dateend)
-            day_frac = de.hour / 24. + de.minute / 1440. + de.second / 86400.
-            jd = datetime.date(de).toordinal() + day_frac + 1721424.5
-            mjd = jd - 2400000.5
-            ccddata.header['MJD'] = mjd
-        # Add NVIDINP
-        ccddata.header['NVIDINP'] = ccddata.header['TAPLINES']
-        # Add GAINMUL
-        ccddata.header['GAINMUL'] = 1
-        # Add CCDMODE
-        if 'CDSSPEED' in ccddata.header:
-            ccddata.header['CCDMODE'] = ccddata.header['CDSSPEED']
         else:
-            ccddata.header['CCDMODE'] = 0
-        # Add AMPMNUM
-        if 'AMPMODE' in ccddata.header:
-            ampmode = ccddata.header['AMPMODE']
-            if ampmode == 'L2U2L1U1':
-                ampnum = 0
-            elif ampmode == 'L2U2':
-                ampnum = 1
-            elif ampmode == 'L1U1':
-                ampnum = 2
-            elif ampmode == 'L2L1':
-                ampnum = 3
-            elif ampmode == 'U2U1':
-                ampnum = 4
-            elif ampmode == 'L2':
-                ampnum = 5
-            elif ampmode == 'U2':
-                ampnum = 6
-            elif ampmode == 'L1':
-                ampnum = 7
-            elif ampmode == 'U1':
-                ampnum = 8
-            else:
-                ampnum = 0
-            ccddata.header['AMPMNUM'] = ampnum
+            logger.debug(
+                "Package not installed from a git repo, skipping git info"
+            )
 
-            for amp in red_amp_dict.keys():
-                if amp in ampmode:
-                    # TODO: put in check for kw before updating
-                    gkey = 'GAIN%d' % red_amp_dict[amp]
-                    gain = red_amp_gain[amp]
-                    ccddata.header[gkey] = gain
-    else:
-        print("ERROR -- illegal CAMERA keyword: %s" % ccddata.header['CAMERA'])
+    # ------------------------------------------------------------------
+    # Convert science data to float32
+    # ------------------------------------------------------------------
+
+    if (
+        ccddata.data is not None
+        and ccddata.data.dtype == np.float64
+    ):
+        ccddata.data = ccddata.data.astype(np.float32)
+
+    # ------------------------------------------------------------------
+    # Convert uncertainty to float32
+    # ------------------------------------------------------------------
+
+    if (
+        ccddata.uncertainty is not None
+        and ccddata.uncertainty.array.dtype == np.float64
+    ):
+        ccddata.uncertainty.array = (
+            ccddata.uncertainty.array.astype(np.float32)
+        )
+
+    # ------------------------------------------------------------------
+    # Construct output filename
+    # ------------------------------------------------------------------
+
+    out_file = os.path.join(
+        output_dir,
+        os.path.basename(output_file),
+    )
+
+    if suffix is not None:
+        main_name, extension = os.path.splitext(out_file)
+        out_file = main_name + "_" + suffix + extension
+
+    # ------------------------------------------------------------------
+    # Build base HDUList
+    # ------------------------------------------------------------------
+
+    hdus_to_save = ccddata.to_hdu()
+
+    # ------------------------------------------------------------------
+    # DQ extension
+    # ------------------------------------------------------------------
+
+    if quality_map is not None:
+
+        dq = np.asarray(quality_map)
+
+        if dq.ndim != 2:
+            raise ValueError(
+                "quality_map must be a 2-D array. "
+                f"Received shape {dq.shape}"
+            )
+
+        # Verify it matches the science image
+        if (
+            ccddata.data is not None
+            and dq.shape != ccddata.data.shape
+        ):
+            raise ValueError(
+                "quality_map shape does not match science data: "
+                f"{dq.shape} != {ccddata.data.shape}"
+            )
+
+        # DQ is a bit mask, so force unsigned integer storage
+        dq = dq.astype(np.uint32, copy=False)
+
+        hdu_dq = fits.ImageHDU(
+            data=dq,
+            name="DQ",
+        )
+
+        hdu_dq.header["EXTDESC"] = (
+            "Detector data-quality bit mask"
+        )
+
+        hdu_dq.header["DQ0"] = (
+            "bit 0: detector bad pixel (BPM)"
+        )
+
+        hdu_dq.header["DQ1"] = (
+            "bit 1: directly saturated during ramp"
+        )
+
+        hdu_dq.header["DQ2"] = (
+            "bit 2: saturated neighbor caused earlier cutoff"
+        )
+
+        hdus_to_save.append(hdu_dq)
+
+    # ------------------------------------------------------------------
+    # CHISQ extension
+    # ------------------------------------------------------------------
+
+    if chisq is not None:
+
+        chisq_map = np.asarray(chisq)
+
+        if chisq_map.ndim != 2:
+            raise ValueError(
+                "chisq must be a 2-D array. "
+                f"Received shape {chisq_map.shape}"
+            )
+
+        # Verify it matches the science image
+        if (
+            ccddata.data is not None
+            and chisq_map.shape != ccddata.data.shape
+        ):
+            raise ValueError(
+                "chisq shape does not match science data: "
+                f"{chisq_map.shape} != {ccddata.data.shape}"
+            )
+
+        chisq_map = chisq_map.astype(
+            np.float32,
+            copy=False,
+        )
+
+        hdu_chisq = fits.ImageHDU(
+            data=chisq_map,
+            name="CHISQ",
+        )
+
+        hdu_chisq.header["EXTDESC"] = (
+            "Chi-square value from ramp fit"
+        )
+
+        hdus_to_save.append(hdu_chisq)
+
+    # ------------------------------------------------------------------
+    # Write file
+    # ------------------------------------------------------------------
+
+    logger.info(
+        ">>> Saving %d HDUs to %s",
+        len(hdus_to_save),
+        out_file,
+    )
+
+    hdus_to_save.writeto(
+        out_file,
+        overwrite=True,
+    )
+
+
+def fits_writer_calib(
+    data,                  # 2D or 3D array
+    header,                # FITS header (astropy.io.fits.Header)
+    output_dir,            # base output directory
+    input_filename,        # original filename (used for naming)
+    suffix,                # string appended to filename
+    overwrite=True,
+    uncert=None,
+    dq=None,
+    chisq=None,
+):
+    """
+    Write calibration data and optional auxiliary products to a FITS file
+    inside redux/.
+
+    Parameters
+    ----------
+    data : ndarray
+        Calibration array.
+
+    header : fits.Header
+        FITS header for the primary HDU.
+
+    output_dir : str
+        Output directory. A redux/ directory will be created inside this.
+
+    input_filename : str
+        Original filename, used to derive the output filename.
+
+    suffix : str
+        Suffix appended before the extension
+        (e.g. '_mdark', '_mflat').
+
+    overwrite : bool, optional
+        Whether to overwrite an existing file. Default is True.
+
+    uncert : ndarray, optional
+        Uncertainty array. Must have the same shape as data.
+        Saved as the 'UNCERT' extension.
+
+    dq : ndarray, optional
+        Data-quality bit mask. Must have the same shape as data.
+
+        Current DQ definition:
+
+            bit 0 : detector bad pixel / BPM
+            bit 1 : directly saturated during ramp
+            bit 2 : saturated neighbor caused earlier ramp cutoff
+
+        Bits may be combined.
+
+    chisq : ndarray, optional
+        Chi-square map from ramp fitting. Must have the same shape as data.
+        Saved as the 'CHISQ' extension.
+
+    Returns
+    -------
+    output_path : str
+        Full path to the written FITS file.
+    """
+
+    # --------------------------------------------------------------
+    # Ensure output directory exists
+    # --------------------------------------------------------------
+    redux_dir = os.path.join(
+        output_dir,
+        "redux"
+    )
+
+    os.makedirs(
+        redux_dir,
+        exist_ok=True
+    )
+
+    # --------------------------------------------------------------
+    # Construct output filename
+    # --------------------------------------------------------------
+    base_name = os.path.basename(
+        input_filename
+    )
+
+    file_root, file_ext = os.path.splitext(
+        base_name
+    )
+
+    output_filename = (
+        f"{file_root}{suffix}{file_ext}"
+    )
+
+    output_path = os.path.join(
+        redux_dir,
+        output_filename
+    )
+
+    # --------------------------------------------------------------
+    # Primary HDU
+    # --------------------------------------------------------------
+    data_array = np.asarray(
+        data,
+        dtype=np.float32
+    )
+
+    hdus = [
+        fits.PrimaryHDU(
+            data=data_array,
+            header=header
+        )
+    ]
+
+    # --------------------------------------------------------------
+    # Uncertainty extension
+    # --------------------------------------------------------------
+    if uncert is not None:
+
+        uncert_array = np.asarray(
+            uncert
+        )
+
+        if uncert_array.shape != data_array.shape:
+
+            warnings.warn(
+                f"Uncertainty shape {uncert_array.shape} "
+                f"does not match data shape {data_array.shape}; "
+                "skipping UNCERT extension."
+            )
+
+        else:
+
+            hdu_uncert = fits.ImageHDU(
+                data=uncert_array.astype(
+                    np.float32,
+                    copy=False
+                ),
+                name="UNCERT"
+            )
+
+            hdu_uncert.header["EXTDESC"] = (
+                "Uncertainty associated with science/calibration data"
+            )
+
+            hdus.append(
+                hdu_uncert
+            )
+
+    # --------------------------------------------------------------
+    # DQ extension
+    # --------------------------------------------------------------
+    if dq is not None:
+
+        dq_array = np.asarray(
+            dq
+        )
+
+        if dq_array.shape != data_array.shape:
+
+            warnings.warn(
+                f"DQ shape {dq_array.shape} "
+                f"does not match data shape {data_array.shape}; "
+                "skipping DQ extension."
+            )
+
+        else:
+
+            dq_array = dq_array.astype(
+                np.uint32,
+                copy=False
+            )
+
+            dq_hdu = fits.ImageHDU(
+                data=dq_array,
+                name="DQ"
+            )
+
+            dq_hdu.header["EXTDESC"] = (
+                "Detector data-quality bit mask"
+            )
+
+            dq_hdu.header["DQ0"] = (
+                "bit 0: detector bad pixel / BPM"
+            )
+
+            dq_hdu.header["DQ1"] = (
+                "bit 1: directly saturated during ramp"
+            )
+
+            dq_hdu.header["DQ2"] = (
+                "bit 2: saturated neighbor caused earlier ramp cutoff"
+            )
+
+            hdus.append(
+                dq_hdu
+            )
+
+    # --------------------------------------------------------------
+    # Chi-square extension
+    # --------------------------------------------------------------
+    if chisq is not None:
+
+        chisq_array = np.asarray(
+            chisq
+        )
+
+        if chisq_array.shape != data_array.shape:
+
+            warnings.warn(
+                f"CHISQ shape {chisq_array.shape} "
+                f"does not match data shape {data_array.shape}; "
+                "skipping CHISQ extension."
+            )
+
+        else:
+
+            hdu_chisq = fits.ImageHDU(
+                data=chisq_array.astype(
+                    np.float32,
+                    copy=False
+                ),
+                name="CHISQ"
+            )
+
+            hdu_chisq.header["EXTDESC"] = (
+                "Chi-square value from ramp fit"
+            )
+
+            hdus.append(
+                hdu_chisq
+            )
+
+    # --------------------------------------------------------------
+    # Build and write HDUList
+    # --------------------------------------------------------------
+    hdul = fits.HDUList(
+        hdus
+    )
+
+    hdul.writeto(
+        output_path,
+        overwrite=overwrite
+    )
+
+    return output_path

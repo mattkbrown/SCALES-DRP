@@ -122,7 +122,7 @@ def main():
         for in_frame in in_subset.index:
             arguments = Arguments(name=in_frame)
             framework.append_event('next_file', arguments, recurrent=True)
-    
+
     def process_list(in_list):
         for in_frame in in_list:
             arguments = Arguments(name=in_frame)
@@ -156,8 +156,8 @@ def main():
         scales_config_fullpath = str(get_resource_path(pkg, scales_config_file))
         scales_config = ConfigClass(scales_config_fullpath, default_section='SCALES')
     else:
-        scales_config_fullpath = os.path.abspath(args.scales_config_file)
-        scales_config = ConfigClass(args.SCALES_config_file, default_section='SCALES')
+        scales_config_fullpath = os.path.abspath(args.SCALES_config_file)
+        scales_config = ConfigClass(scales_config_fullpath, default_section='SCALES')
 
     # END HANDLING OF CONFIGURATION FILES ##########
 
@@ -190,14 +190,6 @@ def main():
         )
         framework.config.instrument.procfile = args.proctab
 
-    framework.config.instrument.arc_min_nframes = \
-	scales_config.arc_min_nframes
-    framework.config.instrument.contbars_min_nframes = \
-	scales_config.contbars_min_nframes = \
-    framework.config.instrument.object_min_nframes = \
-	scales_config.object_min_nframes
-    framework.config.instrument.minoscanpix = scales_config.minoscanpix
-    framework.config.instrument.oscanbuf = scales_config.oscanbuf
 
     # initialize the proctab and read it
     framework.context.proctab = Proctab()
@@ -220,19 +212,6 @@ def main():
     elif args.frames:
         frames = []
         for frame in args.frames:
-            # Verify we have the correct channel selected
-            #if args.lowres and 'mr' in frame:
-            #    print('low-res channel requested, but medium-res files in list')
-            #    qstr = input('Proceed? <cr>=yes or Q=quit: ')
-            #    if 'Q' in qstr.upper():
-            #        frames = []
-            #        break
-            #if args.medres and 'lr' in frame:
-            #    print('med-res channel requested, but low-res files in list')
-            #    qstr = input('Proceed? <cr>=yes or Q=quit: ')
-            #    if 'Q' in qstr.upper():
-            #        frames = []
-            #        break
             frames.append(frame)
         framework.ingest_data(None, frames, False)
 
@@ -242,19 +221,6 @@ def main():
         with open(args.file_list) as file_list:
             for frame in file_list:
                 if "#" not in frame:
-                    # Verify we have the correct channel selected
-                    #if args.lowres and 'mr' in frame:
-                    #    print('	Low-res channel requested, but med-res files in list')
-                    #    qstr = input('Proceed? <cr>=yes or Q=quit: ')
-                    #    if 'Q' in qstr.upper():
-                    #        frames = []
-                    #        break
-                    #if args.medres and 'lr' in frame:
-                    #    print('Med-res channel requested, but low-res files in list')
-                    #    qstr = input('Proceed? <cr>=yes or Q=quit: ')
-                    #    if 'Q' in qstr.upper():
-                    #        frames = []
-                    #        break
                     frames.append(frame.strip('\n'))
 
         framework.ingest_data(None, frames, False)
@@ -269,6 +235,108 @@ def main():
     elif args.dirname is not None:
 
         framework.ingest_data(args.dirname, None, args.monitor)
+
+
+    framework.context.clobber = scales_config.clobber
+    framework.context.calib_file_path = scales_config.calib_file_path
+
+    framework.context.bpm_ifs_fast0p6 = scales_config.bpm_ifs_fast0p6
+    framework.context.bpmat_ifs_fast0p6 = scales_config.bpmat_ifs_fast0p6
+    framework.context.flat_ifs_fast0p6 = scales_config.flat_ifs_fast0p6
+    framework.context.sig_map_ifs_fast0p6 = scales_config.sig_map_ifs_fast0p6
+    framework.context.lin_coeff_ifs_fast0p6 = scales_config.lin_coeff_ifs_fast0p6
+    framework.context.sat_map_ifs_fast0p6 = scales_config.sat_map_ifs_fast0p6
+    
+    framework.context.bpm_ifs_fast1 = scales_config.bpm_ifs_fast1
+    framework.context.bpmat_ifs_fast1 = scales_config.bpmat_ifs_fast1
+    framework.context.flat_ifs_fast1 = scales_config.flat_ifs_fast1
+    framework.context.sig_map_ifs_fast1 = scales_config.sig_map_ifs_fast1
+    framework.context.lin_coeff_ifs_fast1 = scales_config.lin_coeff_ifs_fast1
+    framework.context.sat_map_ifs_fast1 = scales_config.sat_map_ifs_fast1
+
+    framework.context.bpm_ifs_slow = scales_config.bpm_ifs_slow
+    framework.context.bpmat_ifs_slow = scales_config.bpmat_ifs_slow
+    framework.context.flat_ifs_slow = scales_config.flat_ifs_slow
+    framework.context.sig_map_ifs_slow = scales_config.sig_map_ifs_slow
+    framework.context.lin_coeff_ifs_slow = scales_config.lin_coeff_ifs_slow
+    framework.context.sat_map_ifs_slow = scales_config.sat_map_ifs_slow
+
+    framework.context.bpm_img_fast0p6 = scales_config.bpm_img_fast0p6
+    framework.context.bpmat_img_fast0p6 = scales_config.bpmat_img_fast0p6
+    framework.context.flat_img_fast0p6 = scales_config.flat_img_fast0p6
+    framework.context.sig_map_img_fast0p6 = scales_config.sig_map_img_fast0p6
+    framework.context.lin_coeff_img_fast0p6 = scales_config.lin_coeff_img_fast0p6
+    framework.context.sat_map_img_fast0p6 = scales_config.sat_map_img_fast0p6
+
+    framework.context.bpm_img_fast1 = scales_config.bpm_img_fast1
+    framework.context.bpmat_img_fast1 = scales_config.bpmat_img_fast1
+    framework.context.flat_img_fast1 = scales_config.flat_img_fast1
+    framework.context.sig_map_img_fast1 = scales_config.sig_map_img_fast1
+    framework.context.lin_coeff_img_fast1 = scales_config.lin_coeff_img_fast1
+    framework.context.sat_map_img_fast1 = scales_config.sat_map_img_fast1
+
+    framework.context.bpm_img_slow = scales_config.bpm_img_slow
+    framework.context.bpmat_img_slow = scales_config.bpmat_img_slow
+    framework.context.flat_img_slow = scales_config.flat_img_slow
+    framework.context.sig_map_img_slow = scales_config.sig_map_img_slow
+    framework.context.lin_coeff_img_slow = scales_config.lin_coeff_img_slow
+    framework.context.sat_map_img_slow = scales_config.sat_map_img_slow
+
+    framework.context.OPT_rmat_LowRes_K = scales_config.OPT_rmat_LowRes_K
+    framework.context.C2_rmat_LowRes_K = scales_config.C2_rmat_LowRes_K
+    framework.context.OPT_rmat_LowRes_L = scales_config.OPT_rmat_LowRes_L
+    framework.context.C2_rmat_LowRes_L = scales_config.C2_rmat_LowRes_L
+    framework.context.OPT_rmat_LowRes_M = scales_config.OPT_rmat_LowRes_M
+    framework.context.C2_rmat_LowRes_M = scales_config.C2_rmat_LowRes_M
+    framework.context.OPT_rmat_LowRes_KLM = scales_config.OPT_rmat_LowRes_KLM
+    framework.context.C2_rmat_LowRes_KLM = scales_config.C2_rmat_LowRes_KLM
+    framework.context.OPT_rmat_LowRes_KL = scales_config.OPT_rmat_LowRes_KLM
+    framework.context.C2_rmat_LowRes_KL = scales_config.C2_rmat_LowRes_KLM
+    framework.context.OPT_rmat_LowRes_Ls = scales_config.OPT_rmat_LowRes_KLM
+    framework.context.C2_rmat_LowRes_Ls = scales_config.C2_rmat_LowRes_KLM
+    framework.context.OPT_rmat_MedRes_K = scales_config.OPT_rmat_MedRes_K
+    framework.context.C2_rmat_MedRes_K = scales_config.C2_rmat_MedRes_K
+    framework.context.OPT_rmat_MedRes_L = scales_config.OPT_rmat_MedRes_L
+    framework.context.C2_rmat_MedRes_L = scales_config.C2_rmat_MedRes_L
+    framework.context.OPT_rmat_MedRes_M = scales_config.OPT_rmat_MedRes_M
+    framework.context.C2_rmat_MedRes_M = scales_config.C2_rmat_MedRes_M
+
+    framework.context.subtract_row_median = scales_config.subtract_row_median
+    framework.context.do_swap = scales_config.do_swap
+    framework.context.nchans = scales_config.nchans
+    framework.context.altcol = scales_config.altcol
+    framework.context.channelwise = scales_config.channelwise
+    framework.context.amp_mean_func = scales_config.amp_mean_func
+    framework.context.do_acn = scales_config.do_acn
+    framework.context.acn_avg_type = scales_config.acn_avg_type
+    framework.context.acn_mean_func = scales_config.acn_mean_func
+    framework.context.acn_smooth = scales_config.acn_smooth
+    framework.context.acn_savgol = scales_config.acn_savgol
+    framework.context.acn_winsize = scales_config.acn_winsize
+    framework.context.acn_order = scales_config.acn_order
+    framework.context.resid_colsub = scales_config.resid_colsub
+    framework.context.fixcol = scales_config.fixcol
+    framework.context.ref_avg_type = scales_config.ref_avg_type
+    framework.context.ref_mean_func = scales_config.ref_mean_func
+    framework.context.ref_smooth = scales_config.ref_smooth
+    framework.context.ref_savgol = scales_config.ref_savgol
+    framework.context.ref_winsize = scales_config.ref_winsize
+    framework.context.ref_order = scales_config.ref_order
+    framework.context.pickup = scales_config.pickup
+    framework.context.sigma_thresh = scales_config.sigma_thresh
+    framework.context.dilate_iter = scales_config.dilate_iter
+    framework.context.highpass_size = scales_config.highpass_size
+    framework.context.per_amp = scales_config.per_amp
+    framework.context.do_linearity = scales_config.do_linearity
+    framework.context.apply_sat_mask = scales_config.apply_sat_mask
+    framework.context.apply_bpm = scales_config.apply_bpm
+    framework.context.apply_dark = scales_config.apply_dark
+    framework.context.apply_det_flat = scales_config.apply_det_flat
+    framework.context.apply_bias = scales_config.apply_bias
+    framework.context.apply_lens_flat = scales_config.apply_lens_flat
+    framework.context.lowres_final_cube = scales_config.lowres_final_cube
+    framework.context.medres_final_cube = scales_config.medres_final_cube
+
 
     # implement the group mode
     if args.group_mode is True:

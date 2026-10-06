@@ -41,19 +41,6 @@ class QuickLook(BasePrimitive):
             #log = getattr(self, "logger", None) or logging.getLogger("SCALES")
             #self.proctab = Proctab(logger=log)
 
-    def fits_writer_steps1(self,data,header,output_dir,input_filename,suffix,overwrite=True):
-        base_name = os.path.basename(input_filename)
-        file_root, file_ext = os.path.splitext(base_name)
-        output_filename = f"{file_root}{suffix}{file_ext}"
-        redux_output_dir = os.path.join(output_dir, 'ql_redux')
-        os.makedirs(redux_output_dir, exist_ok=True)
-        output_path = os.path.join(redux_output_dir, output_filename)
-        hdu = fits.PrimaryHDU(data=data, header=header)
-        hdu.writeto(output_path, overwrite=overwrite)
-        self.logger.info("+++++++++++ FITS file saved +++++++++++")
-        return output_path
-
-
     def fits_writer_steps(
         self,
         data,
@@ -134,78 +121,6 @@ class QuickLook(BasePrimitive):
 
         return output_path
 
-    def optimal_extract_with_error(self,
-        R_transpose: sp.spmatrix, 
-        data_image: np.ndarray, 
-        read_noise_variance_vector: np.ndarray, 
-        gain: float = 1.0
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Performs classic (Horne 1986) optimal extraction and calculates the
-        corresponding 1-sigma error for each flux element.
-        Args:
-            R_transpose: The (N_fluxes, N_pixels) sparse rectification matrix.
-            data_image: The (H,W) input data image.
-            read_noise_variance_vector: The (N_pixels,) 1D vector of read noise variance.
-            gain: The detector gain.
-        Returns:
-            A tuple containing:
-            - optimized_flux (np.ndarray): The extracted 1D flux array.
-            - flux_error (np.ndarray): The corresponding 1D array of 1-sigma errors.
-        """
-        self.logger.info('Optimal extraction started')
-        start_time1 = time.time()
-        data_vector_d = data_image.flatten().astype(np.float64)
-        photon_noise_variance = data_vector_d.clip(min=0) / gain
-        total_variance = read_noise_variance_vector + photon_noise_variance
-        total_variance[total_variance <= 0] = 1e-9  
-        inverse_variance = 1.0 / total_variance
-        weighted_data = data_vector_d #* inverse_variance
-        numerator = R_transpose @ weighted_data
-        R_transpose_squared = R_transpose.power(2)
-        denominator = R_transpose_squared @ inverse_variance
-        denominator_safe = np.maximum(denominator, 1e-9)
-        optimized_flux = numerator / denominator_safe
-        #flux_variance = 1.0 / denominator_safe
-        #flux_error = np.sqrt(flux_variance)
-        end_time1 = time.time()
-        t1 = (end_time1 - start_time1)
-        self.logger.info(f"Optimal extraction finished in {t1:.4f} seconds.")
-        return optimized_flux
-
-    def iterative_sigma_weighted_ramp_fit1(self,ramp, read_time, gain=3.0, rn=5.0, max_iter=3, tile=(256, 256)):
-        n_reads, n_rows, n_cols = ramp.shape
-        read_times = np.linspace(0, read_time, n_reads, dtype=np.float32)
-        dt = np.mean(np.diff(read_times))
-        slope = np.zeros((n_rows, n_cols), dtype=np.float32)
-        bias = np.zeros_like(slope)
-        Ty, Tx = tile
-        for y0 in range(0, n_rows, Ty):
-            y1 = min(n_rows, y0 + Ty)
-            for x0 in range(0, n_cols, Tx):
-                x1 = min(n_cols, x0 + Tx)
-                cube = ramp[:, y0:y1, x0:x1]  # (N, ty, tx)
-                N, ty, tx = cube.shape
-                shape = (ty, tx)
-                m = np.zeros(shape, dtype=np.float32)
-                b = np.zeros(shape, dtype=np.float32)
-                for iteration in range(max_iter):
-                    sig2 = np.maximum(cube / gain + rn**2, 1e-6)
-                    i = np.arange(N, dtype=np.float32)[:, None, None]
-                    S0  = np.sum(1.0 / sig2, axis=0)
-                    S1  = np.sum(i / sig2, axis=0)
-                    S2  = np.sum(i**2 / sig2, axis=0)
-                    S0x = np.sum(cube / sig2, axis=0)
-                    S1x = np.sum(i * cube / sig2, axis=0)
-                    ibar = S1 / S0
-                    mdt = (S1x - ibar * S0x) / np.maximum(S2 - ibar**2 * S0, 1e-8)
-                    m = mdt / dt
-                    b = S0x / S0 - mdt * ibar
-                    cube_model = b[None, :, :] + m[None, :, :] * i * dt
-                    cube = np.clip(cube_model, 0, None)  # keep stable iteration
-                slope[y0:y1, x0:x1] = m
-                bias[y0:y1, x0:x1] = b
-        return slope
 
     def iterative_sigma_weighted_ramp_fit(self,ramp, read_time, gain=3.0, rn=5.0, tile=(256, 256), return_bias=False):
         ramp = np.asarray(ramp)
@@ -288,11 +203,12 @@ class QuickLook(BasePrimitive):
 
         self.logger.info("Optimal extraction started")
         t0 = time.time()
-        data_vector = np.asarray(data_image, dtype=np.float32).ravel()
-        numerator = R_transpose @ data_vector
+        optimized_flux = np.array(R_transpose*np.matrix(data_image.reshape([2048*2048,1])))
+        #data_vector = np.asarray(data_image, dtype=np.float32).ravel()
+        #optimized_flux = R_transpose @ data_vector
         #denominator = R2_transpose @ np.ones(data_vector.size, dtype=np.float32)
         #denominator_safe = np.maximum(denominator, 1e-9)
-        optimized_flux = numerator #/ denominator_safe
+        #optimized_flux = numerator #/ denominator_safe
         self.logger.info(f"Optimal extraction finished in {time.time() - t0:.4f} seconds.")
         return optimized_flux
 
@@ -391,8 +307,11 @@ class QuickLook(BasePrimitive):
                 raise ValueError(f"Essential FITS keyword '{key}' is missing.")
 
         # convertd ra and dec into degrees
-        crval_ra = self._parse_sky_coord(header["RA"], is_ra=True)
-        crval_dec = self._parse_sky_coord(header["DEC"], is_ra=False)
+        ra_str = header.get('RA', '00:00:00.0')
+        dec_str = header.get('DEC', '00:00:00.0')
+
+        crval_ra = self._parse_sky_coord(ra_str, is_ra=True)
+        crval_dec = self._parse_sky_coord(dec_str, is_ra=False)
 
         # Spatial scale to degrees
         pixel_scale_deg = SCALES_PLATE_SCALE_ARCSEC / 3600.0
@@ -648,12 +567,12 @@ class QuickLook(BasePrimitive):
                     elif data_1.ndim == 2:
                         self.logger.info("Found a single frame.")
                         data_11 = self.swap_odd_even_columns(data_1,do_swap=False)
-                        slope_filled1 = reference.reffix_hxrg(data_11, nchans=4, fixcol=False)
+                        slope_filled1 = reference.reffix_hxrg(data_11)
                         self.logger.info("+++++++++++ ACN & 1/f Correction applied +++++++++++")
 
                     elif data_1.ndim == 3:
                         data_11 = self.swap_odd_even_columns(data_1,do_swap=False)
-                        img_corr = reference.reffix_hxrg(data_11, nchans=4, fixcol=True)
+                        img_corr = reference.reffix_hxrg(data_11)
                         self.logger.info("+++++++++++ ACN & 1/f Correction applied +++++++++++")
                         slope_filled1 = self.iterative_sigma_weighted_ramp_fit(
                             img_corr,
@@ -670,7 +589,7 @@ class QuickLook(BasePrimitive):
                         raise ValueError(f"Expected (2D, 3D) shapes, got {img2d.shape}, {ramp3d.shape}")
 
                     data_11 = self.swap_odd_even_columns(ramp3d,do_swap=False)
-                    img_corr = reference.reffix_hxrg(data_11, nchans=4, fixcol=True)
+                    img_corr = reference.reffix_hxrg(data_11)
                     self.logger.info("+++++++++++ ACN & 1/f Correction applied +++++++++++")
                     slope_filled1 = self.iterative_sigma_weighted_ramp_fit(
                         img_corr,
@@ -680,12 +599,13 @@ class QuickLook(BasePrimitive):
 
         if obs_mode == "Im":
             self.logger.info("BPM correction started")
-            rmat = sparse.load_npz(calib_path+'bpmat_img.npz')
-            slope_filled2 = rmat*np.matrix(slope_filled1.flatten().reshape([np.prod(slope_filled1.shape),1]))
-            slope_filled = np.array(slope_filled2).reshape(slope_filled1.shape)
+            #rmat = sparse.load_npz(calib_path+'bpmat_img.npz')
+            #slope_filled2 = rmat*np.matrix(slope_filled1.flatten().reshape([np.prod(slope_filled1.shape),1]))
+            #slope_filled = np.array(slope_filled2).reshape(slope_filled1.shape)
             self.logger.info("BPM correction completed")
             self.fits_writer_steps(
-                data=slope_filled,
+                #data=slope_filled1,
+                data=img_corr,
                 header=hdr,
                 output_dir=output_dir,
                 input_filename=filename,
@@ -695,13 +615,14 @@ class QuickLook(BasePrimitive):
 
         if obs_mode == "IFS":
             self.logger.info("BPM correction started")
-            rmat = sparse.load_npz(calib_path+'bpmat_ifs.npz')
-            slope_filled2 = rmat*np.matrix(slope_filled1.flatten().reshape([np.prod(slope_filled1.shape),1]))
-            slope_filled = np.array(slope_filled2).reshape(slope_filled1.shape)
+            #rmat = sparse.load_npz(calib_path+'bpmat_ifs.npz')
+            #slope_filled2 = rmat*np.matrix(slope_filled1.flatten().reshape([np.prod(slope_filled1.shape),1]))
+            #slope_filled = np.array(slope_filled2).reshape(slope_filled1.shape)
             self.logger.info("BPM correction completed")
 
             self.fits_writer_steps(
-                data=slope_filled,
+                data=img_corr,
+                #data=slope_filled1,
                 header=hdr,
                 output_dir=output_dir,
                 input_filename=filename,
@@ -895,15 +816,15 @@ class QuickLook(BasePrimitive):
                 print("IFSMODE is", ifs_mode)
                 if (
                     slope_filled is not None
-                    and os.path.exists(os.path.join(calib_path, "K_QL_rectmat_medres.npz"))
+                    and os.path.exists(os.path.join(calib_path, "ql_rmat_k_260604.npz"))
                     and (obj == "OBJECT" or obj == "FLATLEN")):
 
-                    R_matrix_medres_k = load_npz(calib_path+'K_QL_rectmat_medres.npz')
+                    R_matrix_medres_k = load_npz(calib_path+'ql_rmat_k_260604.npz')
                     cube1 = self.optimal_extract_fast(
                         R_matrix_medres_k,
                         slope_filled)
 
-                    cube= cube1.reshape(1900,18,17)
+                    cube= cube1.reshape(169,17,18)
                     wcs, wave_info = self.create_scales_wcs(
                         cube_shape=cube.shape,
                         header=hdr)
@@ -933,7 +854,7 @@ class QuickLook(BasePrimitive):
                         R_matrix_medres_l,
                         slope_filled)
 
-                    cube= cube1.reshape(1900,18,17)
+                    cube= cube1.reshape(1900,17,18)
                     wcs, wave_info = self.create_scales_wcs(
                         cube_shape=cube.shape,
                         header=hdr)
@@ -963,7 +884,7 @@ class QuickLook(BasePrimitive):
                         R_matrix_medres_m,
                         slope_filled)
 
-                    cube= cube1.reshape(1900,18,17)
+                    cube= cube1.reshape(1900,17,18)
                     wcs, wave_info = self.create_scales_wcs(
                         cube_shape=cube.shape,
                         header=hdr)

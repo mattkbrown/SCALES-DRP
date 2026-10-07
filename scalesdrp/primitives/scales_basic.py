@@ -665,12 +665,10 @@ def solve_bounded_weighted_nnls(
     lower_bounds = 0
     upper_bounds = np.maximum(0, A_guess) * bound_factor
     upper_bounds += 1e-9
-    #bounds = (lower_bounds, upper_bounds)
+    upper_bounds = cp.asarray(upper_bounds)
     start_time = time.time()
-    #lsq_options = {'tol': tolerance, 'verbose': 0}
-    #res = lsq_linear(R_prime, d_prime, bounds=bounds, **lsq_options)
     x,_,_,_,_,_,_,_ = gpu_lsmr(R_prime_gpu, d_prime_gpu, x0=guess, atol=1e-8, btol=1e-8)
-    x = cp.clip(x, lower_bounds, cp.asarray(upper_bounds))
+    x = cp.clip(x, lower_bounds, upper_bounds)
     end_time = time.time()
     t = (end_time - start_time)/60.0
     print(f"Bounded lsmr finished in {t:.4f} mins.")

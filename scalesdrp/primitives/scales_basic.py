@@ -15,9 +15,6 @@ import warnings
 import astropy.units as u
 from scipy import sparse
 from scipy.optimize import lsq_linear
-from cupyx.scipy.sparse import csr_matrix as gpu_csr_matrix
-import cupy as cp
-from cupyx.scipy.sparse.linalg import lsmr as gpu_lsmr
 from astropy.coordinates import Angle
 from astropy.wcs import WCS
 import astropy.io.fits as pyfits
@@ -650,6 +647,10 @@ def solve_bounded_weighted_nnls(
     Returns:
         Returns the best-fit amplitude
     """
+    # cupy is imported here so the rest of the package works without a GPU
+    import cupy as cp
+    from cupyx.scipy.sparse import csr_matrix as gpu_csr_matrix
+    from cupyx.scipy.sparse.linalg import lsmr as gpu_lsmr
     print("\nSolving with BOUNDED weighted non-negative least squares...")
     photon_noise_variance = data_vector.clip(min=0) / gain
     total_variance = read_noise_variance_vector + photon_noise_variance
@@ -669,7 +670,7 @@ def solve_bounded_weighted_nnls(
     #lsq_options = {'tol': tolerance, 'verbose': 0}
     #res = lsq_linear(R_prime, d_prime, bounds=bounds, **lsq_options)
     x,_,_,_,_,_,_,_ = gpu_lsmr(R_prime_gpu, d_prime_gpu, x0=guess, atol=1e-8, btol=1e-8)
-    x = cp.clip(x, lower_bounds, upper_bounds)
+    x = cp.clip(x, lower_bounds, cp.asarray(upper_bounds))
     end_time = time.time()
     t = (end_time - start_time)/60.0
     print(f"Bounded lsmr finished in {t:.4f} mins.")

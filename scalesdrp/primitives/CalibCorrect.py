@@ -50,7 +50,7 @@ class CalibCorrect(BasePrimitive):
             calib_path = str(get_resource_path(package, calibfilepath))+'/'
 
             final_ramp = self.action.args.ccddata.data
-            final_uncert = self.action.args.ccddata.uncertainty
+            final_uncert = np.asarray(self.action.args.ccddata.uncertainty.array, dtype=np.float32)
             chisq = self.action.args.ccddata.chisq
             quality_map = self.action.args.ccddata.dq
 
@@ -147,7 +147,7 @@ class CalibCorrect(BasePrimitive):
 
             self.action.args.ccddata.data = final_ramp
             #self.action.args.ccddata.uncertainty = StdDevUncertainty(final_uncert.astype(np.float32))
-            self.action.args.ccddata.uncertainty = StdDevUncertainty(final_uncert.array.astype(np.float32))
+            self.action.args.ccddata.uncertainty = StdDevUncertainty(np.asarray(final_uncert, dtype=np.float32))
             self.action.args.ccddata.chisq = StdDevUncertainty(chisq.astype(np.float32))
 
             log_string = CalibCorrect.__module__

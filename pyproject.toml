@@ -42,7 +42,7 @@ cupy-cuda12x     = ">=13.6.0"
 [tool.poetry.scripts]
 start_scales_reduce    = "scalesdrp.scripts.reduce_scales:main"
 start_scales_calib     = "scalesdrp.scripts.scales_calib:main"
-start_scales_quicklook = "scalesdrp.scripts.scales_quicklook:main"
+start_scales_calib_sa  = "scalesdrp.scripts.scales_calib_sa:main"
 start_scales_rti       = "scalesdrp.scripts.scales_rti:main"
 
 [build-system]

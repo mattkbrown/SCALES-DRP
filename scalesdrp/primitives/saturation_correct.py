@@ -13,6 +13,7 @@ RAMP_DQ = {
     "BPM": np.uint16(1 << 0),
     "SATURATED": np.uint16(1 << 1),
     "SAT_NEIGHBOR": np.uint16(1 << 2),
+    "INVALID_SAT_MAP": np.uint16(1 << 3),
 }
 
 
@@ -205,15 +206,19 @@ def make_ramp_quality_mask(
         True  = use this read
         False = reject this read
 
-        Once the first rejection read is reached, that read and every later
-        read are False. BPM pixels are False for every read.
+        Once the first saturation rejection read is reached, that read
+        and every later read are False. BPM pixels are flagged in the
+        2-D quality map but are not automatically excluded from ramp
+        fitting. Bad-pixel correction is performed separately on the
+        ramp-fitted slope image.
     """
     cube, sat_map, bpm_map = _validate_inputs(
         input_cube,
         saturation_map,
         bpm=bpm,
     )
-
+    invalid_saturation = ~np.isfinite(sat_map) | (sat_map <= 0)
+    
     n_reads, height, width = cube.shape
 
     (
@@ -236,16 +241,30 @@ def make_ramp_quality_mask(
     quality_map[bpm_map] |= RAMP_DQ["BPM"]
     quality_map[directly_saturated] |= RAMP_DQ["SATURATED"]
     quality_map[neighbor_affected] |= RAMP_DQ["SAT_NEIGHBOR"]
-
+    quality_map[invalid_saturation] |= RAMP_DQ["INVALID_SAT_MAP"]
+    
     # ------------------------------------------------------------------
     # 3-D ramp-fitting mask
     # ------------------------------------------------------------------
-    # Read r is good only when r is strictly earlier than first_rejected.
+    # Read r is valid only if it occurs before the first rejected read.
     read_index = np.arange(n_reads, dtype=np.int32)[:, None, None]
-    good_read_mask = read_index < first_rejected[None, :, :]
 
-    # Entire ramp is rejected for externally bad pixels.
-    #good_read_mask[:, bpm_map] = False
+    # Identify pixels with invalid saturation thresholds.
+    invalid_saturation = (
+        ~np.isfinite(sat_map)
+        | (sat_map <= 0))
+
+    # Construct the dynamic saturation mask.
+    good_read_mask = (
+        (read_index < first_rejected[None, :, :])
+        & np.isfinite(cube))
+
+    # Exclude reads from pixels with invalid saturation thresholds.
+    good_read_mask[:, invalid_saturation] = False
+
+    # Do not mask master BPM pixels here.
+    # They remain flagged in quality_map and will be corrected
+    # separately after ramp fitting on the 2-D slope image.
 
     if print_summary:
         affected = first_rejected < n_reads

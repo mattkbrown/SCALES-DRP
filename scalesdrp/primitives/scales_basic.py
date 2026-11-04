@@ -1067,24 +1067,50 @@ def solve_bounded_weighted_nnls(
     Returns:
         Returns the best-fit amplitude
     """
-    # cupy is imported here so the rest of the package works without a GPU
-    import cupy as cp
-    from cupyx.scipy.sparse import csr_matrix as gpu_csr_matrix
-    from cupyx.scipy.sparse.linalg import lsmr as gpu_lsmr
     print("\nSolving with BOUNDED weighted non-negative least squares...")
     photon_noise_variance = data_vector.clip(min=0) / gain
     total_variance = read_noise_variance_vector + photon_noise_variance
     total_variance[total_variance <= 0] = 1e-9
     weights = 1.0 / np.sqrt(total_variance)
-    guess = cp.asarray(A_guess)
     W = sp.diags(weights, format='csr')
     R_prime = W @ R_matrix
-    R_prime_gpu = gpu_csr_matrix(R_prime)
     d_prime = W @ data_vector
-    d_prime_gpu = cp.asarray(d_prime)
     lower_bounds = 0
     upper_bounds = np.maximum(0, A_guess) * bound_factor
     upper_bounds += 1e-9
+    # TODO(A1/A6): dispatch on scalesdrp.core.gpu.select_backend() and restore
+    # the lsq_linear CPU path; until then the GPU solver is always used.
+    return _solve_nnls_gpu(R_prime, d_prime, A_guess, lower_bounds, upper_bounds)
+
+
+def _solve_nnls_gpu(
+    R_prime: sp.spmatrix,
+    d_prime: np.ndarray,
+    A_guess: np.ndarray,
+    lower_bounds: float,
+    upper_bounds: np.ndarray) -> np.ndarray:
+    """
+    GPU (cupy) solve of the weighted least-squares problem R' x = d'.
+
+    Note: this runs an unbounded LSMR solve and then clips x to the bounds,
+    which is not equivalent to the bounded CPU solve (see plan task B3).
+
+    Args:
+        R_prime: Weighted (N_pixels, N_fluxes) sparse matrix W @ R.
+        d_prime: Weighted (N_pixels,) data vector W @ d.
+        A_guess: (N_fluxes,) starting guess.
+        lower_bounds: Lower bound applied to x.
+        upper_bounds: (N_fluxes,) upper bounds applied to x.
+    Returns:
+        The (N_fluxes,) solution as a NumPy array.
+    """
+    # cupy is imported here so the rest of the package works without a GPU
+    import cupy as cp
+    from cupyx.scipy.sparse import csr_matrix as gpu_csr_matrix
+    from cupyx.scipy.sparse.linalg import lsmr as gpu_lsmr
+    guess = cp.asarray(A_guess)
+    R_prime_gpu = gpu_csr_matrix(R_prime)
+    d_prime_gpu = cp.asarray(d_prime)
     upper_bounds = cp.asarray(upper_bounds)
     start_time = time.time()
     x,_,_,_,_,_,_,_ = gpu_lsmr(R_prime_gpu, d_prime_gpu, x0=guess, atol=1e-8, btol=1e-8)

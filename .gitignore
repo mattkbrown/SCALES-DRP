@@ -8,3 +8,6 @@
 **/*.fits
 **/logs
 **/*.pyc
+
+# Local planning notes
+GPU_PR_PLAN.md

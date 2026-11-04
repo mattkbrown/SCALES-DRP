@@ -1,4 +1,4 @@
-import importlib_resources
+from importlib import resources as importlib_resources
 import os
 
 def get_resource_path(pkg, path):

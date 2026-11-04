@@ -1,16 +1,54 @@
-[tool.poetry]
+[project]
 name = "scalesdrp"
 version = "1.0.1"
 description = "SCALES Data Reduction Pipeline"
 readme = "README.rst"
 license = "BSD-3-Clause"
 authors = [
-    "A. Unni",
-    "S. Sallum",
-    "M. Brodheim",
-    "M. Brown"
+    { name = "A. Unni" },
+    { name = "S. Sallum" },
+    { name = "M. Brodheim" },
+    { name = "M. Brown" },
 ]
-homepage = "https://github.com/Keck-DataReductionPipelines/SCALES_DRP.git"
+requires-python = ">=3.12"
+dependencies = [
+    # keckdrpframework 1.0.0 requires numpy<=2.0.0, so numpy is capped here
+    # as well. numpy<=2.0.0 only ships wheels up to Python 3.12; raise this
+    # cap (and allow Python 3.13+) once keckdrpframework relaxes it.
+    "numpy>=1.26.4,<=2.0.0",
+    "scipy>=1.14.1,<2",
+    "astropy>=6.1.3,<8",
+    "scikit-image>=0.24,<1",
+    "pandas>=2.2,<3",
+    "matplotlib>=3.9.2,<4",
+    "psutil>=5.9.8,<8",
+    "requests>=2.32.5,<3",
+    "tqdm>=4.67,<5",
+    "keckdrpframework>=1.0,<2",
+]
+
+[project.optional-dependencies]
+# GPU-accelerated chi^2 extraction (CUDA 12.x). Install with:
+#   pip install "scalesdrp[gpu]"      or      poetry install -E gpu
+# cupy 14 requires numpy>=2.0, which keckdrpframework's numpy<=2.0.0 cap
+# would pin to exactly 2.0.0, so cupy is held at 13.x for now.
+gpu = [
+    "cupy-cuda12x>=13.6,<14",
+]
+test = [
+    "pytest>=8",
+]
+
+[project.urls]
+Homepage = "https://github.com/Keck-DataReductionPipelines/SCALES_DRP.git"
+
+[project.scripts]
+start_scales_reduce   = "scalesdrp.scripts.reduce_scales:main"
+start_scales_calib    = "scalesdrp.scripts.scales_calib:main"
+start_scales_calib_sa = "scalesdrp.scripts.scales_calib_sa:main"
+start_scales_rti      = "scalesdrp.scripts.scales_rti:main"
+
+[tool.poetry]
 packages = [{ include = "scalesdrp" }]
 include = [
     "scalesdrp/configs/*.cfg",
@@ -19,32 +57,6 @@ include = [
     "scalesdrp/data/stds/*"
 ]
 
-[tool.poetry.dependencies]
-python           = ">=3.12"
-scikit-image     = ">=0.24,<1.0"
-astropy          = ">=6.1.3,<6.2.0"
-astroscrappy     = ">=1.1.0,<1.2.0"
-ccdproc          = ">=2.4.2,<2.5.0"
-numpy            = "==1.26.4"
-scipy            = ">=1.14.1,<1.15.0"
-pyerfa           = ">=2.0.1.5,<3.0.0.0"
-psutil           = ">=5.7.0,<5.8.0"
-pytest           = ">=5.4.1,<5.5.0"
-keckdrpframework = "1.0"
-requests         = ">=2.32.5,<3.0.0"
-pandas           = ">=1.3.5,<3.0.0"
-matplotlib       = ">=3.9.2,<3.10.0"
-ref_index        = ">=1.0,<2.0"
-pyregion         = ">=2.0,<3.0"
-tqdm             = ">=4.67.3"
-cupy-cuda12x     = ">=13.6.0"
-
-[tool.poetry.scripts]
-start_scales_reduce    = "scalesdrp.scripts.reduce_scales:main"
-start_scales_calib     = "scalesdrp.scripts.scales_calib:main"
-start_scales_calib_sa  = "scalesdrp.scripts.scales_calib_sa:main"
-start_scales_rti       = "scalesdrp.scripts.scales_rti:main"
-
 [build-system]
-requires      = ["poetry-core>=2.0.0,<3.0.0"]
+requires      = ["poetry-core>=2.1,<3"]
 build-backend = "poetry.core.masonry.api"

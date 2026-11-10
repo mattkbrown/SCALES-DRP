@@ -9,5 +9,8 @@
 **/logs
 **/*.pyc
 
+# Generated Sphinx documentation
+/docs/build/
+
 # Local planning notes
 GPU_PR_PLAN.md

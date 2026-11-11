@@ -1,5 +1,6 @@
 from scalesdrp.core.scales_proctab import Proctab
 from scalesdrp.core.scales_pkg_resources import get_resource_path
+from scalesdrp.core import rectmat_io
 from scalesdrp.core.matplot_plotting import mpl_plot, mpl_clear
 import scalesdrp.primitives.fitramp as fitramp
 import scalesdrp.primitives.robust as robust
@@ -1172,35 +1173,18 @@ def load_rectmat(path, lenslet_grid=None):
     """
     Load a rectmat and the cube shape (nlam, ny, nx) of its flux axis.
 
-    Rectmats written by save_rectmat carry their own cube_shape, which is
-    used (and checked against the matrix). Older rectmats have none; then
-    nlam is derived from the matrix size and lenslet_grid = (ny, nx).
+    Reads the FITS rectmat format (see scalesdrp.core.rectmat_io) and legacy
+    .npz rectmats. FITS and save_rectmat .npz files carry their own cube
+    shape; older .npz files have none, so nlam is derived from the matrix
+    size and lenslet_grid = (ny, nx).
+
+    Use rectmat_io.read_rectmat to also get the wavelengths and header.
 
     Returns:
         R_matrix (scipy sparse), cube_shape (tuple of 3 ints)
     """
-    R_matrix = sp.load_npz(path)
-    n_flux = _rectmat_n_flux(R_matrix)
-
-    with np.load(path) as z:
-        stored = tuple(int(n) for n in z['cube_shape']) if 'cube_shape' in z.files else None
-
-    if stored is not None:
-        if int(np.prod(stored)) != n_flux:
-            raise ValueError(f"{os.path.basename(path)}: stored cube_shape {stored} "
-                             f"does not match its {n_flux} flux elements.")
-        return R_matrix, stored
-
-    if lenslet_grid is None:
-        raise ValueError(f"{os.path.basename(path)} has no stored cube_shape; "
-                         f"pass lenslet_grid=(ny, nx) to infer it.")
-    ny, nx = (int(n) for n in lenslet_grid)
-    if n_flux % (ny * nx):
-        raise ValueError(f"{os.path.basename(path)} has {n_flux} flux elements, "
-                         f"not divisible by the lenslet grid ny*nx = {ny}*{nx}. "
-                         f"Check the lenslet grid for this mode, or regenerate "
-                         f"the rectmat so it stores its cube_shape.")
-    return R_matrix, (n_flux // (ny * nx), ny, nx)
+    rect = rectmat_io.read_rectmat(path, lenslet_grid=lenslet_grid)
+    return rect.matrix, rect.cube_shape
 
 
 def solve_weighted_lsq_per_lenslet(

@@ -6,6 +6,9 @@ from scipy.ndimage import binary_dilation
 #from scalesdrp.primitives.scales_file_primitives import scales_fits_writer
 import scalesdrp.primitives.scales_basic as scbasic
 import scalesdrp.primitives.mono_basic as mono_basic
+from scalesdrp.core import rectmat_io
+from scalesdrp.core.calib_cache import file_md5
+from importlib.metadata import version, PackageNotFoundError
 import pandas as pd
 import numpy as np
 import pickle
@@ -52,10 +55,12 @@ class ProcessMonochrom(BasePrimitive):
             return [], []
 
         det_config = np.unique(df2['MCLOCK'])[0]
-        lams = df2['MONOWAVE']
-        names = df2['filename'][np.argsort(lams)]
+        df2 = df2.sort_values('MONOWAVE', kind='stable')
+        # Kept for the rectmat header and SOURCES table
+        self.mono_rows = df2
+        lams = df2['MONOWAVE'].to_numpy(dtype=float)
+        names = df2['filename']
 
-        lams = np.sort(lams)
         ims = []
         for name in names:
             image = pyfits.getdata(output_dir+'/'+name,memmap=False)
@@ -2397,6 +2402,97 @@ class ProcessMonochrom(BasePrimitive):
         lensflat = np.median(lensflatcube,axis=0)
         return np.array(lsfcube),np.array(lensflat)
 
+    def _rectmat_header(self, scmode, interpolated, cropsize, fluxcut, oversamp,
+                        ninterp, spot_thresh, spot_sigma, match_dist):
+        """
+        Primary-header keywords for the rectmats of one mode: the instrument
+        state of the monochromator frames (self.mono_rows, set by parse_files)
+        and the parameters the matrices were built with.
+        """
+        rows = self.mono_rows
+        hdr = {}
+
+        def column(*keys):
+            for key in keys:
+                if key in rows and rows[key].notna().any():
+                    return rows[key].dropna()
+            return None
+
+        for key in ("CAMERA", "MODSLNAM", "DSPRSNAM", "FILTER", "STATEID"):
+            values = column(key)
+            if values is not None:
+                hdr[key] = str(values.iloc[0]).strip()
+                if values.astype(str).str.strip().nunique() > 1:
+                    self.logger.warning(f"{scmode}: monochromator frames have more than "
+                                        f"one {key}; recording {hdr[key]}")
+        dates = column("DATE-OBS")
+        if dates is not None:
+            dates = dates.astype(str).sort_values()
+            hdr["DATE-OBS"] = (dates.iloc[0], "first monochromator frame")
+            hdr["DATE-END"] = (dates.iloc[-1], "last monochromator frame")
+        mjds = column("MJD-OBS", "MJD")
+        if mjds is not None:
+            hdr["MJD-OBS"] = (float(mjds.astype(float).min()), "first monochromator frame")
+
+        try:
+            drp_version = version("scalesdrp")
+        except PackageNotFoundError:
+            drp_version = "unknown"
+
+        hdr.update({
+            "IFSMODE": (scmode, "SCALES IFS mode"),
+            "INTERP": (bool(interpolated), "built on the interpolated PSF grid"),
+            "CALVER": ("001", "calibration version"),
+            "DRPVER": (drp_version, "scalesdrp version that built this"),
+            "NFRAMES": (int(len(rows)), "monochromator frames used"),
+            "RFLXCUT": (float(fluxcut), "rectmat_fluxcut"),
+            "CROPSIZE": (int(cropsize), "spot crop size [det pix]"),
+            "OVERSAMP": (int(oversamp), "A&K spot model oversampling"),
+            "LAMMIN": (float(self.lmin), "spot tracking lower limit [um]"),
+            "LAMMAX": (float(self.lmax), "spot tracking upper limit [um]"),
+            "DESTRIPE": (bool(self.config.instrument.apply_destripe), "row destripe applied"),
+            "SPOTTHR": (float(spot_thresh), "spot finding threshold"),
+            "SPOTSIG": (float(spot_sigma), "spot finding smoothing sigma"),
+            "MATCHDST": (float(match_dist), "spot tracking match distance [det pix]"),
+        })
+        if interpolated:
+            hdr["NINTERP"] = (int(ninterp), "interpolated wavelength grid points")
+        return hdr
+
+    def _mono_sources(self):
+        """The monochromator frames of the current mode, for the SOURCES table."""
+        rows = self.mono_rows
+        dates = rows["DATE-OBS"] if "DATE-OBS" in rows else [""] * len(rows)
+        return [{"filename": name, "monowave": float(mw) / 1000.0, "date_obs": str(date)}
+                for name, mw, date in zip(rows["filename"], rows["MONOWAVE"], dates)]
+
+    def _write_lsf_lflat(self, prefix, lsf, lflat, wavelengths, hdr, opt_path):
+        """
+        Write <prefix>_lsf.fits and <prefix>_lflat.fits with the same identity
+        keywords as the OPT rectmat they were made from, plus a link to it.
+        """
+        base = rectmat_io.merge_header(fits.Header(), hdr)
+        base["RMATFILE"] = (os.path.basename(opt_path), "OPT rectmat these were made from")
+        base["RMATMD5"] = (file_md5(opt_path), "MD5 of that rectmat file")
+
+        lsf_hdr = base.copy()
+        lsf_hdr["CALTYPE"] = ("lsf", "caldb cal_type")
+        nin, nlam, ny, nx = lsf.shape
+        lsf_hdr["NIN"] = (nin, "input wavelengths (numpy axis 0)")
+        lsf_hdr["NLAM"] = (nlam, "cube slices (numpy axis 1)")
+        lsf_hdr["NLENSY"] = (ny, "lenslet grid rows (numpy axis 2)")
+        lsf_hdr["NLENSX"] = (nx, "lenslet grid columns (numpy axis 3)")
+        lsf_hdr.add_comment("data[i, j, y, x] = response in cube slice j of lenslet (y, x)")
+        lsf_hdr.add_comment("to input at wavelength i. Both i and j index WAVELENGTH.")
+        fits.HDUList([
+            fits.PrimaryHDU(lsf, header=lsf_hdr),
+            rectmat_io.wavelength_hdu(wavelengths),
+        ]).writeto(prefix+'_lsf.fits', overwrite=True)
+
+        lflat_hdr = base.copy()
+        lflat_hdr["EXTDESC"] = "lenslet flat from the monochromator LSF"
+        fits.PrimaryHDU(lflat, header=lflat_hdr).writeto(prefix+'_lflat.fits', overwrite=True)
+
     def _perform(self):
 
 
@@ -2442,10 +2538,11 @@ class ProcessMonochrom(BasePrimitive):
                 self.logger.info("done loading images for "+str(self.scmode))
                 if scmode.split('-')[0] == 'LowRes':
                     csize = 8
+                    spot_thresh, spot_sigma, match_dist = 90.0, 1.2, 3
                     self.logger.info("finding spots")
-                    spots = self.find_all_spots(ims_cal,lams,plot_im=False,thresh=90.0,sigma=1.2,medres=False)
+                    spots = self.find_all_spots(ims_cal,lams,plot_im=False,thresh=spot_thresh,sigma=spot_sigma,medres=False)
                     self.logger.info("tracking spots sequentially")
-                    spot_tracks = self.track_sequentially(spots,max_match_distance=3)
+                    spot_tracks = self.track_sequentially(spots,max_match_distance=match_dist)
                     self.logger.info("removing duplicates and silos")
                     spot_tracks_u = self.remove_spot_dups(spot_tracks,lams,
                                                 lmin=self.lmin,lmax=self.lmax,medres=False)
@@ -2468,8 +2565,9 @@ class ProcessMonochrom(BasePrimitive):
 
                 if scmode.split('-')[0] == 'MedRes':
                     csize=16
-                    spots = self.find_all_spots(ims_cal,lams,plot_im=False,thresh=70.0,sigma=1.2,medres=True,mfilt=self.mfilt)
-                    spot_tracks = self.track_sequentially(spots, max_match_distance=13)
+                    spot_thresh, spot_sigma, match_dist = 70.0, 1.2, 13
+                    spots = self.find_all_spots(ims_cal,lams,plot_im=False,thresh=spot_thresh,sigma=spot_sigma,medres=True,mfilt=self.mfilt)
+                    spot_tracks = self.track_sequentially(spots, max_match_distance=match_dist)
                     self.logger.info("removing duplicates and silos")
                     spot_tracks_u = self.remove_spot_dups(spot_tracks,lams,lmin=self.lmin,lmax=self.lmax,medres=True)
                     avgs = self.find_avg_spotpos_model(spot_tracks_u,self.lmin,self.lmax,medres=True,show_plots=False)
@@ -2484,7 +2582,6 @@ class ProcessMonochrom(BasePrimitive):
 
                 centroids = self.get_centroids(spots)
                 pyfits.writeto(output_dir+'/'+scmode+'_centroids.fits',np.array(centroids),overwrite=True)
-                pyfits.writeto(output_dir+'/'+scmode+'_lams.fits',lams,overwrite=True)
                 #stop
                 diagnostic_path = mono_basic.plot_rectmat_centroid_diagnostics(
                     ims_cal=ims_cal,
@@ -2543,6 +2640,13 @@ class ProcessMonochrom(BasePrimitive):
                 pyfits.writeto(output_dir+'/'+
                                 scmode+'_gauss_spotpars_interpd.fits',np.array(interp_arr),
                                 overwrite=True)
+                def build_hdr(interpolated):
+                    return self._rectmat_header(
+                        scmode, interpolated=interpolated, cropsize=csize,
+                        fluxcut=fluxcut, oversamp=oversamp,
+                        ninterp=len(lams_interp), spot_thresh=spot_thresh,
+                        spot_sigma=spot_sigma, match_dist=match_dist)
+
                 self.logger.info("making chi2 rectmat")
                 C2_rmat = self.gen_C2_rectmat(ims_cal,posarr,cut=fluxcut)
                 self.logger.info("making interpolated chi2 rectmat")
@@ -2571,45 +2675,39 @@ class ProcessMonochrom(BasePrimitive):
                     OPT_rmat_interpd_shift = self.gen_QL_rectmat_interpd(ims_cal,interp_shift_arr,cut=fluxcut,method='optimal')
                     self.logger.info("making interpolated shifted chi2 rectmat")
                     C2_rmat_interpd_shift = self.gen_C2_rectmat_interpd(ims_cal,interp_shift_arr,cut=fluxcut)
-                    scbasic.save_rectmat(output_dir+'/'+
-                                    scmode+'_C2_intp_rectmat_dx'+str(self.config.instrument.rectmat_xshift)+
-                                    '_dy'+str(self.config.instrument.rectmat_yshift)+
-                                    '.npz',C2_rmat_interpd_shift,
-                                    cube_shape=interp_shift_arr.shape[:3])
-                    scbasic.save_rectmat(output_dir+'/'+
-                                    scmode+'_OPT_intp_rectmat_dx'+str(self.config.instrument.rectmat_xshift)+
-                                    '_dy'+str(self.config.instrument.rectmat_yshift)+
-                                    '.npz',OPT_rmat_interpd_shift,
-                                    cube_shape=interp_shift_arr.shape[:3])
+                    shift_hdr = {"XSHIFT": (self.config.instrument.rectmat_xshift, "x shift applied [det pix]"),
+                                 "YSHIFT": (self.config.instrument.rectmat_yshift, "y shift applied [det pix]")}
+                    shift_tag = ('_dx'+str(self.config.instrument.rectmat_xshift)+
+                                 '_dy'+str(self.config.instrument.rectmat_yshift))
+                    for kind, rmat in (('C2', C2_rmat_interpd_shift), ('OPT', OPT_rmat_interpd_shift)):
+                        rectmat_io.write_rectmat(
+                            output_dir+'/'+scmode+'_'+kind+'_intp_rectmat'+shift_tag+'.fits',
+                            rmat, interp_shift_arr.shape[:3], lams_interp, kind=kind,
+                            header={**build_hdr(True), **shift_hdr})
 
 
                 self.logger.info("writing out rectmats")
                 # cube_shape = (nlam, ny, nx): the same array shapes the
-                # gen_*_rectmat functions use to lay out the flux axis
-                scbasic.save_rectmat(output_dir+'/'+
-                                scmode+'_OPT_rectmat.npz',OPT_rmat,
-                                cube_shape=posarr.shape[:3])
-                pyfits.writeto(output_dir+'/'+
-                                scmode+'_OPT_lsf.fits',OPT_lsf,overwrite=True)
-                pyfits.writeto(output_dir+'/'+
-                                scmode+'_OPT_lflat.fits',OPT_lflat,overwrite=True)
-                scbasic.save_rectmat(output_dir+'/'+
-                                scmode+'_OPT_intp_rectmat.npz',OPT_rmat_interpd,
-                                cube_shape=interp_arr.shape[:3])
-                pyfits.writeto(output_dir+'/'+
-                                scmode+'_OPT_intp_lsf.fits',OPT_lsf_interpd,
-                                overwrite=True)
-                pyfits.writeto(output_dir+'/'+
-                                scmode+'_OPT_intp_lflat.fits',OPT_lflat_interpd,
-                                overwrite=True)
-                scbasic.save_rectmat(output_dir+'/'+
-                                scmode+'_C2_rectmat.npz',C2_rmat,
-                                cube_shape=posarr.shape[:3])
-                scbasic.save_rectmat(output_dir+'/'+
-                                scmode+'_C2_intp_rectmat.npz',C2_rmat_interpd,
-                                cube_shape=interp_arr.shape[:3])
-                pyfits.writeto(output_dir+'/'+scmode+'_intp_lams.fits',
-                    lams_interp,overwrite=True)
+                # gen_*_rectmat functions use to lay out the flux axis.
+                # The wavelength grid is stored in each rectmat's WAVELENGTH table.
+                products = (
+                    # (interpolated, OPT, C2, LSF, lflat, cube shape, wavelengths, file tag)
+                    (False, OPT_rmat, C2_rmat, OPT_lsf, OPT_lflat, posarr.shape[:3], lams, ''),
+                    (True, OPT_rmat_interpd, C2_rmat_interpd, OPT_lsf_interpd, OPT_lflat_interpd,
+                     interp_arr.shape[:3], lams_interp, '_intp'),
+                )
+                for interpolated, opt, c2, lsf, lflat, cube_shape, waves, tag in products:
+                    hdr = build_hdr(interpolated)
+                    monowave = None if interpolated else lams
+                    sources = None if interpolated else self._mono_sources()
+                    opt_path = output_dir+'/'+scmode+'_OPT'+tag+'_rectmat.fits'
+                    rectmat_io.write_rectmat(opt_path, opt, cube_shape, waves, kind='OPT',
+                                             header=hdr, monowave=monowave, sources=sources)
+                    rectmat_io.write_rectmat(output_dir+'/'+scmode+'_C2'+tag+'_rectmat.fits',
+                                             c2, cube_shape, waves, kind='C2',
+                                             header=hdr, monowave=monowave, sources=sources)
+                    self._write_lsf_lflat(output_dir+'/'+scmode+'_OPT'+tag, lsf, lflat,
+                                          waves, hdr, opt_path)
 
             log_string = ProcessMonochrom.__module__
             self.logger.info(log_string)

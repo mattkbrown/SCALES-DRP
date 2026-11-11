@@ -127,13 +127,20 @@ class CalibStore:
         self.root = os.path.join(cache_root(cache_dir), "caldb")
         self.index_path = os.path.join(self.root, "index.json")
         os.makedirs(self.root, exist_ok=True)
+        self._index_memo = (None, None)  # (mtime_ns, index)
 
     # ---------- metadata ----------
 
     def _load_index(self):
+        """The index, re-read only when the file changed (it is read per lookup)."""
         try:
+            mtime = os.stat(self.index_path).st_mtime_ns
+            if self._index_memo[0] == mtime:
+                return dict(self._index_memo[1])
             with open(self.index_path) as f:
-                return json.load(f)
+                index = json.load(f)
+            self._index_memo = (mtime, index)
+            return dict(index)
         except (FileNotFoundError, json.JSONDecodeError):
             return {"last_updated": None, "checked_at": 0, "records": []}
 
@@ -172,9 +179,14 @@ class CalibStore:
             self._save_index(index)
             return changed
 
-    def select(self, cal_type, instrument_mode=None, read_mode=None, detector=None,
-               obs_time=None, stateid=None):
+    def select(self, cal_type, **selectors):
         """The record to use, or None. See the module docstring for the rule."""
+        matches = self.candidates(cal_type, **selectors)
+        return matches[0] if matches else None
+
+    def candidates(self, cal_type, instrument_mode=None, read_mode=None, detector=None,
+                   obs_time=None, stateid=None):
+        """All matching records, best first (the order select uses)."""
         obs_time = parse_time(obs_time)
 
         def ok(r):
@@ -186,11 +198,8 @@ class CalibStore:
                     and (stateid is None or r.get("stateid") == stateid)
                     and (obs_time is None or parse_time(r["datetime_obs"]) <= obs_time))
 
-        matches = [r for r in self.records() if ok(r)]
-        if not matches:
-            return None
-        return max(matches, key=lambda r: (parse_time(r["datetime_obs"]),
-                                           str(r.get("cal_version", ""))))
+        return sorted((r for r in self.records() if ok(r)), reverse=True,
+                      key=lambda r: (parse_time(r["datetime_obs"]), str(r.get("cal_version", ""))))
 
     # ---------- files ----------
 

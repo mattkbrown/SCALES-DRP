@@ -1,6 +1,6 @@
 from scalesdrp.core.scales_proctab import Proctab
 from scalesdrp.core.scales_pkg_resources import get_resource_path
-from scalesdrp.core import rectmat_io
+from scalesdrp.core import rectmat_io, calib_resolve
 from scalesdrp.core.matplot_plotting import mpl_plot, mpl_clear
 import scalesdrp.primitives.fitramp as fitramp
 import scalesdrp.primitives.robust as robust
@@ -3380,14 +3380,54 @@ def apply_calibration(
 
 ############### load master files ##########################################
 
-def load_single_master_file(expected_keywords, master_type):
+# master_type -> caldb cal_type
+MASTER_CAL_TYPES = {"DARK": "dark", "BIAS": "bias", "FLATLAMP": "detector_flat"}
+
+
+def _read_matching_master(path, expected_keywords, master_type):
+    """(data, uncert) of a master file if its header matches, else None."""
+    try:
+        with fits.open(path) as hdul:
+            hdr = hdul[0].header
+            data = hdul[0].data
+            uncert = hdul["UNCERT"].data if "UNCERT" in hdul else None
+    except Exception:
+        return None
+
+    # IMTYPE check comes from requested master_type
+    if (hdr.get("IMTYPE") or "").upper() != master_type:
+        return None
+
+    for key, expected_value in expected_keywords.items():
+        if expected_value is None:
+            continue
+        # EXPTIME only matters for DARK
+        if key == "EXPTIME" and master_type != "DARK":
+            continue
+        actual_value = hdr.get(key)
+        if key == "EXPTIME":
+            try:
+                if not np.isclose(float(actual_value), float(expected_value), rtol=0, atol=1e-6):
+                    return None
+            except Exception:
+                return None
+        elif actual_value != expected_value:
+            return None
+    return (data, uncert)
+
+
+def load_single_master_file(expected_keywords, master_type, config=None, header=None,
+                            logger=None):
     """
-    Load one matching master calibration file from ./redux or calib/.
+    Load one matching master calibration file: from ./redux (tonight's
+    masters) first, then the caldb (if config has use_caldb and header, the
+    frame's header, is given), then calib/.
 
     Matching rules:
     - IMTYPE is determined from master_type.
     - CAMERA and MCLOCK must match for all master files.
-    - EXPTIME must match only for DARK.
+    - EXPTIME must match only for DARK. The caldb has no exposure time
+      column, so caldb darks are checked by their header, newest first.
     - If no matching file is found, return (None, None).
     """
 
@@ -3403,75 +3443,31 @@ def load_single_master_file(expected_keywords, master_type):
     if tail is None:
         return (None, None)
 
-    # Search redux first, then package calib/
-    search_dirs = [os.path.join(os.getcwd(), "redux")]
-    package = __name__.split(".")[0]
-    filepath = "calib/"
-    calib_path = str(get_resource_path(package, filepath))
-    search_dirs.append(calib_path)
-    for base in search_dirs:
-        if not os.path.isdir(base):
-            continue
+    def dir_candidates(base):
+        if base is None or not os.path.isdir(base):
+            return []
+        return [os.path.join(base, fname) for fname in os.listdir(base)
+                if fname.lower().endswith(".fits") and fname.endswith(tail)]
 
-        candidates = [
-            os.path.join(base, fname)
-            for fname in os.listdir(base)
-            if fname.lower().endswith(".fits") and fname.endswith(tail)
-        ]
+    def caldb_candidates():
+        if config is None or header is None:
+            return []
+        return calib_resolve.caldb_candidates(config, MASTER_CAL_TYPES[master_type], header,
+                                              logger=logger)
 
+    try:
+        calib_path = str(get_resource_path(__name__.split(".")[0], "calib/"))
+    except FileNotFoundError:
+        calib_path = None
+
+    sources = (dir_candidates(os.path.join(os.getcwd(), "redux")),
+               caldb_candidates(),
+               dir_candidates(calib_path))
+    for candidates in sources:
         for path in candidates:
-            try:
-                with fits.open(path) as hdul:
-                    hdr = hdul[0].header
-                    data = hdul[0].data
-                    uncert = hdul["UNCERT"].data if "UNCERT" in hdul else None
-            except Exception:
-                continue
-
-        # --------------------------------------------------
-        # IMTYPE check comes from requested master_type
-        # --------------------------------------------------
-            file_imtype = (hdr.get("IMTYPE") or "").upper()
-
-            expected_imtype = master_type
-
-            if file_imtype != expected_imtype:
-                continue
-
-            mismatch = False
-
-            for key, expected_value in expected_keywords.items():
-                if expected_value is None:
-                    continue
-
-            # EXPTIME only matters for DARK
-                if key == "EXPTIME" and master_type != "DARK":
-                    continue
-
-                actual_value = hdr.get(key)
-
-                if key == "EXPTIME":
-                    try:
-                        if not np.isclose(
-                            float(actual_value),
-                            float(expected_value),
-                            rtol=0,
-                            atol=1e-6,
-                        ):
-                            mismatch = True
-                            break
-                    except Exception:
-                        mismatch = True
-                        break
-                else:
-                    if actual_value != expected_value:
-                        mismatch = True
-                        break
-
-            if mismatch:
-                continue
-
-            return (data, uncert)
+            found = _read_matching_master(path, expected_keywords, master_type)
+            if found is not None:
+                return found
     return (None, None)
 #################################################################################
 
@@ -3532,11 +3528,15 @@ def load_and_normalize_lenslet_flat(
     clip_sigma=7.0,
     iterations=3,
     method='median',
-    logger=None):
+    logger=None,
+    config=None,
+    header=None):
     """
-    Find <prefix>_cube_flatlens.fits by IFSMODE, ensure it's a 3D cube,
+    Find a lenslet flat cube by IFSMODE, ensure it's a 3D cube,
     load (data, uncert), normalize each slice, and propagate uncertainties.
-    Search order: ./redux/ then pkg calib/.
+    Search order: <prefix>_cube_flatlens.fits in ./redux/, then the caldb
+    (cal_type lenslet_flat; if config has use_caldb and header, the frame's
+    header, is given), then <prefix>_cube_flatlens.fits in pkg calib/.
     Returns (flat_norm, flat_norm_uncert) or (None, None).
     logger: Logger for debug messages (e.g. the primitive's self.logger).
         Defaults to this module's logger.
@@ -3544,14 +3544,16 @@ def load_and_normalize_lenslet_flat(
     logger = logger or logging.getLogger(__name__)
     norm_ifsmode = (ifsmode or "").strip().upper().replace("_", "-")
 
-    def _try_dir(base_dir):
-        if not os.path.isdir(base_dir):
-            return None, None, None
-        # look for any file ending in _cube_flatlens.fits
-        candidates = [f for f in os.listdir(base_dir)
+    def _dir_files(base_dir):
+        # any file ending in _cube_flatlens.fits
+        if base_dir is None or not os.path.isdir(base_dir):
+            return []
+        return [os.path.join(base_dir, f) for f in os.listdir(base_dir)
                 if f.endswith("_cube_flatlens.fits") and os.path.isfile(os.path.join(base_dir, f))]
-        for fname in candidates:
-            path = os.path.join(base_dir, fname)
+
+    def _try_files(paths):
+        for path in paths:
+            fname = os.path.basename(path)
             try:
                 with fits.open(path) as hdul:
                     hdr = hdul[0].header
@@ -3587,13 +3589,18 @@ def load_and_normalize_lenslet_flat(
         return None, None, None
 
     # 1) ./redux
-    path_used, flat, uflat = _try_dir(os.path.join(os.getcwd(), "redux"))
-    # 2) pkg calib if not found
+    path_used, flat, uflat = _try_files(_dir_files(os.path.join(os.getcwd(), "redux")))
+    # 2) caldb
+    if flat is None and config is not None and header is not None:
+        path_used, flat, uflat = _try_files(calib_resolve.caldb_candidates(
+            config, "lenslet_flat", header, instrument_mode=ifsmode, logger=logger))
+    # 3) pkg calib if not found
     if flat is None:
-        package = __name__.split('.')[0]
-        filedir = 'calib/'
-        pkg_dir = str(get_resource_path(package, filedir))
-        path_used, flat, uflat = _try_dir(pkg_dir)
+        try:
+            pkg_dir = str(get_resource_path(__name__.split('.')[0], 'calib/'))
+        except FileNotFoundError:
+            pkg_dir = None
+        path_used, flat, uflat = _try_files(_dir_files(pkg_dir))
 
     if flat is None:
         print(f"No lenslet flat cube found for IFSMODE={ifsmode}.")

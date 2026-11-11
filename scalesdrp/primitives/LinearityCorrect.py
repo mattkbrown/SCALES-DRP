@@ -9,6 +9,7 @@ import scalesdrp.primitives.linearity_correct as linearity_correct #linearity co
 from astropy.nddata import StdDevUncertainty
 from scalesdrp.core.scales_proctab import Proctab
 from scalesdrp.core.scales_pkg_resources import get_resource_path
+from scalesdrp.core import calib_resolve
 import logging
 log = logging.getLogger("SCALES")
 import matplotlib.pyplot as plt
@@ -47,34 +48,35 @@ class LinearityCorrect(BasePrimitive):
             package = __name__.split('.')[0]
             det_config = str(det_config).strip()
             plot_dir = self.config.instrument.plot_directory
-            calibfilepath = self.context.calib_file_path
-            calib_path = str(get_resource_path(package, calibfilepath))+'/'
+            # readnoise / saturation / linearity files: caldb (use_caldb) or calib directory
+            calib_file = calib_resolve.detector_file_resolver(
+                self.config, self.context, self.action.args.ccddata.header, logger=self.logger)
             
             if obsmode =='Im':
                 if det_config =='5.0 MHz':  #fast1.0
-                    lin_coeff = calib_path+self.context.lin_coeff_img_fast1
+                    lin_coeff = calib_file('linearity', self.context.lin_coeff_img_fast1, required=False)
 
                 elif det_config =='9.0 MHz': #fast0.6
-                    lin_coeff = calib_path+self.context.lin_coeff_img_fast0p6
+                    lin_coeff = calib_file('linearity', self.context.lin_coeff_img_fast0p6, required=False)
 
                 elif det_config =='20.0 MHz': #slow
-                    lin_coeff = calib_path+self.context.lin_coeff_img_slow
+                    lin_coeff = calib_file('linearity', self.context.lin_coeff_img_slow, required=False)
 
                 else: #default if MCLCOCK is not one of those specified above
-                    lin_coeff = calib_path+self.context.lin_coeff_img_fast0p6
+                    lin_coeff = calib_file('linearity', self.context.lin_coeff_img_fast0p6, required=False)
 
             elif obsmode =='IFS':
                 if det_config =='5.0 MHz':  #fast1.0
-                    lin_coeff = calib_path+self.context.lin_coeff_ifs_fast1
+                    lin_coeff = calib_file('linearity', self.context.lin_coeff_ifs_fast1, required=False)
 
                 elif det_config =='9.0 MHz': #fast1.0
-                    lin_coeff = calib_path+self.context.lin_coeff_ifs_fast0p6
+                    lin_coeff = calib_file('linearity', self.context.lin_coeff_ifs_fast0p6, required=False)
 
                 elif det_config =='20.0 MHz': #slow
-                    lin_coeff = calib_path+self.context.lin_coeff_ifs_slow
+                    lin_coeff = calib_file('linearity', self.context.lin_coeff_ifs_slow, required=False)
 
                 else: #default
-                    lin_coeff = calib_path+self.context.lin_coeff_ifs_fast0p6
+                    lin_coeff = calib_file('linearity', self.context.lin_coeff_ifs_fast0p6, required=False)
 
             sci_im_full_original = self.action.args.ccddata.data
 

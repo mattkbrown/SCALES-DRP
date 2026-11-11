@@ -83,35 +83,56 @@ def header_obs_time(header):
     return None
 
 
-def local_calib_path(context, name):
-    """name inside the configured calib directory, or None if it is not there."""
-    if not name:
-        return None
+def detector_of(header):
+    """caldb detector (IFS / IMG) of a frame, from CAMERA, or None."""
+    return DETECTORS.get(str(header.get("CAMERA", "")).strip().upper())
+
+
+def read_mode_of(header):
+    """caldb read mode of a frame: its MCLOCK, e.g. '5.0 MHz', or None."""
+    return str(header.get("MCLOCK", "") or "").strip() or None
+
+
+def calib_dir(context):
+    """The configured calib directory, or None if it does not exist."""
     try:
-        calib_dir = str(get_resource_path("scalesdrp", context.calib_file_path))
+        return str(get_resource_path("scalesdrp", context.calib_file_path))
     except FileNotFoundError:
         return None
-    path = os.path.join(calib_dir, name)
+
+
+def local_calib_path(context, name):
+    """name inside the configured calib directory, or None if it is not there."""
+    base = calib_dir(context)
+    if not name or base is None:
+        return None
+    path = os.path.join(base, name)
     return path if os.path.exists(path) else None
 
 
+def _selectors(config, header, **selectors):
+    selectors["obs_time"] = header_obs_time(header)
+    if caldb_settings(config)["match_stateid"] and header.get("STATEID"):
+        selectors["stateid"] = str(header["STATEID"]).strip()
+    return selectors
+
+
 def resolve(config, context, cal_type, header, local_name=None, instrument_mode=None,
-            read_mode=None, detector=None, logger=None):
+            read_mode=None, detector=None, logger=None, required=True):
     """
     Path of the calibration file to use for the frame with this header.
 
     Raises FileNotFoundError if neither the caldb nor the calib directory
-    has one.
+    has one, unless required=False: then the configured path is returned even
+    though it does not exist, for files a primitive only opens in some
+    configurations (it fails there, as before, if it does open it).
     """
     logger = logger or log
     store = get_store(config, logger)
     if store is not None:
-        settings = caldb_settings(config)
         store.refresh()
-        selectors = dict(instrument_mode=instrument_mode, read_mode=read_mode,
-                         detector=detector, obs_time=header_obs_time(header))
-        if settings["match_stateid"] and header.get("STATEID"):
-            selectors["stateid"] = str(header["STATEID"]).strip()
+        selectors = _selectors(config, header, instrument_mode=instrument_mode,
+                               read_mode=read_mode, detector=detector)
         try:
             record = store.select(cal_type, **selectors)
             if record is not None:
@@ -124,6 +145,8 @@ def resolve(config, context, cal_type, header, local_name=None, instrument_mode=
             logger.warning(f"caldb: {e}; trying the calib directory")
 
     path = local_calib_path(context, local_name)
+    if path is None and not required:
+        return os.path.join(calib_dir(context) or context.calib_file_path, local_name or "")
     if path is None:
         raise FileNotFoundError(
             f"No {cal_type} file for {instrument_mode or ''} {read_mode or ''} "
@@ -131,6 +154,44 @@ def resolve(config, context, cal_type, header, local_name=None, instrument_mode=
             + (f", and {local_name} is not in the calib directory." if local_name
                else ", and none is configured locally."))
     return path
+
+
+def detector_file_resolver(config, context, header, logger=None):
+    """
+    A function (cal_type, local_name, required=True) -> path for the
+    per-detector calibration files of a frame (readnoise, saturation,
+    linearity, bpm), selected in the caldb by the frame's detector and read
+    mode, with local_name in the calib directory as the fallback.
+    """
+    detector, read_mode = detector_of(header), read_mode_of(header)
+
+    def resolve_file(cal_type, local_name, required=True):
+        return resolve(config, context, cal_type, header, local_name=local_name,
+                       read_mode=read_mode, detector=detector, logger=logger,
+                       required=required)
+    return resolve_file
+
+
+def caldb_candidates(config, cal_type, header, instrument_mode=None, limit=10, logger=None):
+    """
+    Paths of the caldb files of cal_type that could apply to this frame
+    (its detector and read mode, not after it), best first, downloading each
+    as it is reached. For master files whose last matching criterion (e.g. a
+    dark's EXPTIME) is only in the file's header. Yields nothing if the
+    caldb is not in use.
+    """
+    logger = logger or log
+    store = get_store(config, logger)
+    if store is None:
+        return
+    store.refresh()
+    selectors = _selectors(config, header, instrument_mode=instrument_mode,
+                           read_mode=read_mode_of(header), detector=detector_of(header))
+    for record in store.candidates(cal_type, **selectors)[:limit]:
+        try:
+            yield store.fetch(record)
+        except CalDBError as e:
+            logger.warning(f"caldb: {e}")
 
 
 def rectmat_config_name(context, kind, ifsmode):
@@ -147,12 +208,8 @@ def resolve_rectmat(config, context, kind, ifsmode, header, logger=None):
 
 def resolve_bpm(config, context, header, logger=None):
     """Path of the bad pixel mask for a frame's camera and read mode."""
-    camera = str(header.get("CAMERA", "")).strip().upper()
-    detector = DETECTORS.get(camera)
-    local_name = context.bpm_ifs if detector == "IFS" else context.bpm_img
-    return resolve(config, context, "bpm", header, local_name=local_name,
-                   instrument_mode=None, read_mode=str(header.get("MCLOCK", "")).strip() or None,
-                   detector=detector, logger=logger)
+    local_name = context.bpm_ifs if detector_of(header) == "IFS" else context.bpm_img
+    return detector_file_resolver(config, context, header, logger)("bpm", local_name)
 
 
 def resolve_bpmat(config, context, header, bpm_path, use_rectmat=True, logger=None):

@@ -2,7 +2,7 @@
 scales_caldb: work with the SCALES calibration database and local cache.
 
     scales_caldb list [--cached]
-    scales_caldb sync [--mode M ...] [--date ISO] [--bpm] [--bpmats]
+    scales_caldb sync [--mode M ...] [--date ISO] [--detector-files] [--bpmats]
     scales_caldb publish FILE ... --instrument-era ERA [--koa-filepath P] [--dry-run]
     scales_caldb convert OLD.npz NEW.fits --lams LAMS.fits --ifsmode MODE --kind OPT|C2
 
@@ -29,6 +29,8 @@ IFS_MODES = ["LowRes-K", "LowRes-L", "LowRes-M", "LowRes-KL", "LowRes-KLM", "Low
 READ_MODES = ["5.0 MHz", "9.0 MHz", "20.0 MHz"]
 CAL_TYPES = ["rectmat_opt", "rectmat_c2", "lsf", "lenslet_flat", "bpm", "readnoise",
              "linearity", "saturation", "dark", "bias", "detector_flat"]
+# Per detector and read mode, fetched by sync --detector-files
+DETECTOR_FILES = ["bpm", "readnoise", "saturation", "linearity"]
 # cal_types that do not depend on the detector clock
 CLOCK_FREE = {"rectmat_opt", "rectmat_c2", "lsf", "lenslet_flat"}
 DETECTORS = {"IFS": "IFS", "IM": "IMG", "IMG": "IMG"}
@@ -77,14 +79,17 @@ def cmd_sync(args):
             print(f"  {cal_type:<12} {mode:<10} {path}")
             if cal_type == "rectmat_opt":
                 rectmats[mode] = path
-    if args.bpm or args.bpmats:
+    if args.detector_files or args.bpmats:
         for detector in ("IFS", "IMG"):
             for read_mode in READ_MODES:
+                for cal_type in DETECTOR_FILES if args.detector_files else ():
+                    rec = store.select(cal_type, read_mode=read_mode, detector=detector, obs_time=when)
+                    if rec is not None:
+                        print(f"  {cal_type:<12} {detector:<4} {read_mode:<9} {store.fetch(rec)}")
                 rec = store.select("bpm", read_mode=read_mode, detector=detector, obs_time=when)
                 if rec is None:
                     continue
                 bpm_path = store.fetch(rec)
-                print(f"  bpm          {detector:<4} {read_mode:<9} {bpm_path}")
                 if args.bpmats:
                     for mode, rect_path in (rectmats.items() if detector == "IFS" else []):
                         bpmat.get_bpmat(bpm_path, rect_path, cache_dir=args.cache_dir)
@@ -187,10 +192,11 @@ def build_parser():
     s.add_argument("--cached", action="store_true", help="only records whose file is cached")
     s.set_defaults(func=cmd_list)
 
-    s = sub.add_parser("sync", help="download the current rectmats (and BPMs) into the cache")
+    s = sub.add_parser("sync", help="download the current rectmats (and detector files) into the cache")
     s.add_argument("--mode", action="append", choices=IFS_MODES, help="IFS mode (repeatable; default all)")
     s.add_argument("--date", help="select what applies at this time (ISO; default now)")
-    s.add_argument("--bpm", action="store_true", help="also fetch bad pixel masks")
+    s.add_argument("--detector-files", action="store_true",
+                   help="also fetch the bad pixel masks, readnoise, saturation and linearity files")
     s.add_argument("--bpmats", action="store_true", help="also build and cache the bpmats")
     s.set_defaults(func=cmd_sync)
 

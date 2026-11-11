@@ -46,9 +46,6 @@ class CalibCorrect(BasePrimitive):
             package = __name__.split('.')[0]
             det_config = str(det_config).strip()
 
-            calibfilepath = self.context.calib_file_path
-            calib_path = str(get_resource_path(package, calibfilepath))+'/'
-
             final_ramp = self.action.args.ccddata.data
             final_uncert = self.action.args.ccddata.uncertainty.array
             chisq = getattr(self.action.args.ccddata,"chisq",None)
@@ -94,7 +91,9 @@ class CalibCorrect(BasePrimitive):
                 for key in ['CAMERA', 'MCLOCK', 'EXPTIME']}
 
             if self.config.instrument.apply_dark == True:
-                m_dark, m_dark_uncert = scbasic.load_single_master_file(keywords_unique, master_type='DARK')
+                m_dark, m_dark_uncert = scbasic.load_single_master_file(
+                    keywords_unique, master_type='DARK', config=self.config,
+                    header=self.action.args.ccddata.header, logger=self.logger)
                 if m_dark is not None:
                     final_ramp, final_uncert = scbasic.apply_calibration(
                         final_ramp,
@@ -106,7 +105,9 @@ class CalibCorrect(BasePrimitive):
                     self.logger.info("+++++++++++ Master dark subtracted +++++++++++")
 
             if self.config.instrument.apply_bias == True:
-                m_bias, m_bias_uncert = scbasic.load_single_master_file(keywords_unique, master_type='BIAS')
+                m_bias, m_bias_uncert = scbasic.load_single_master_file(
+                    keywords_unique, master_type='BIAS', config=self.config,
+                    header=self.action.args.ccddata.header, logger=self.logger)
                 if m_bias is not None:
                     final_ramp, final_uncert = scbasic.apply_calibration(
                         final_ramp,
@@ -119,7 +120,9 @@ class CalibCorrect(BasePrimitive):
 
             if self.config.instrument.apply_det_flat == True:
                 
-                m_flat, m_flat_uncert = scbasic.load_single_master_file(keywords_unique, master_type='FLATLAMP')
+                m_flat, m_flat_uncert = scbasic.load_single_master_file(
+                    keywords_unique, master_type='FLATLAMP', config=self.config,
+                    header=self.action.args.ccddata.header, logger=self.logger)
                 if m_flat is not None:
                     norm_flat,norm_flat_uncert = scbasic.normalize_detector_flat(m_flat,m_flat_uncert)
                     final_ramp, final_uncert = scbasic.apply_calibration(

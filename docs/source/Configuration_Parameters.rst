@@ -133,13 +133,19 @@ We have configuration parameters specific to calibration module. They are listed
 Calibration Database
 ~~~~~~~~~~~~~~~~~~~~
 
-With ``use_caldb = True``, rectification matrices and bad pixel masks are
-looked up in the calibration database (caldb) for every frame: the newest
-``GOOD`` file of the right type, IFS mode and read mode taken no later than
-the frame. Downloaded files are verified against their MD5 and kept in a
-local cache, so the caldb is only contacted again when its contents change.
+With ``use_caldb = True``, calibration files are looked up in the
+calibration database (caldb) for every frame: the newest ``GOOD`` file of the
+right type, IFS mode and read mode taken no later than the frame. This covers
+the rectification matrices, bad pixel masks, read noise, saturation and
+linearity maps, and the master dark, bias, detector flat and lenslet flat.
+Downloaded files are verified against their MD5 and kept in a local cache, so
+the caldb is only contacted again when its contents change.
+
 If the caldb has nothing suitable, the file named in the configuration is
-used from the calib directory.
+used from the calib directory. Master files made from tonight's data in
+``./redux`` are always used before the caldb. Master darks must also match
+the frame's exposure time; the caldb has no exposure-time column, so the
+pipeline checks the headers of the newest candidate darks.
 
 .. code-block:: bash
 
@@ -154,7 +160,7 @@ The observer id sent to the caldb is read from ``$SCALES_CALDB_OBSID``. Bad
 pixel matrices built by the pipeline are cached under the same directory.
 
 The ``scales_caldb`` command lists what the caldb holds (``list``),
-pre-fetches the current files for observing (``sync --bpm --bpmats``),
+pre-fetches the current files for observing (``sync --detector-files --bpmats``),
 registers new calibration files using their FITS headers (``publish``) and
 converts legacy ``.npz`` rectification matrices to FITS (``convert``).
 

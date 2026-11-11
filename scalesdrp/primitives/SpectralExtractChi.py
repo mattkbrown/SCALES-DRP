@@ -63,9 +63,6 @@ class SpectralExtractChi(BasePrimitive):
                 'MedRes-M': (50, 60),}
 
             SCALES_DEFAULT_CENTER = (54, 54)
-            package = __name__.split('.')[0]
-            calibfilepath = self.context.calib_file_path
-            calib_path = str(get_resource_path(package, calibfilepath))+'/'
             det_config = self.action.args.ccddata.header['MCLOCK']
             package = __name__.split('.')[0]
             det_config = str(det_config).strip()
@@ -74,18 +71,6 @@ class SpectralExtractChi(BasePrimitive):
             filter = self.action.args.ccddata.header['FILTER']
             ifsmode = scbasic.select_ifsmode(modslnam,dsprsnam,filter)
             filename = self.action.args.ccddata.header.get("OFNAME")
-
-            if det_config =='5.0 MHz':  #fast1.0
-                readnoise = fits.getdata(calib_path+self.context.sig_map_ifs_fast1)
-
-            elif det_config =='9.0 MHz': #fast1.0
-                readnoise  = fits.getdata(calib_path+self.context.sig_map_ifs_fast0p6)
-
-            elif det_config =='20.0 MHz': #slow
-                readnoise = fits.getdata(calib_path+self.context.sig_map_ifs_slow)
-
-            else: #default
-                readnoise = fits.getdata(calib_path+self.context.sig_map_ifs_fast0p6)
 
             sigma_image = self.action.args.ccddata.uncertainty
             # L1 UNCERT already includes read + photon noise, so its square is
@@ -193,7 +178,8 @@ class SpectralExtractChi(BasePrimitive):
                 if self.config.instrument.apply_lens_flat == True:
 
                     norm_flatlens, norm_flatlens_uncert = scbasic.load_and_normalize_lenslet_flat(
-                        ifsmode, logger=self.logger)
+                        ifsmode, logger=self.logger, config=self.config,
+                        header=header)
                     Amp_chi_square, Amp_chi_square_err = scbasic.apply_flatlens(
                         Amp_chi_square,
                         Amp_chi_square_err,

@@ -7,6 +7,7 @@ import scalesdrp.primitives.readnoise_create as rn_create
 import scalesdrp.primitives.bpm_create as bpm_create
 import scalesdrp.primitives.scales_basic as scbasic
 from scalesdrp.core.scales_pkg_resources import get_resource_path
+from scalesdrp.core import calib_resolve
 import scalesdrp.primitives.robust as robust
 import numpy as np
 import time
@@ -113,9 +114,13 @@ class CalibPostProcessSA(BasePrimitive):
                     f"MCLOCK={mclock}, EXPTIME={exptime}:"
                     "WAIT WAIT WAIT")
                 
+                # Inputs come from the caldb (use_caldb) or the calib directory;
+                # the new linearity file is still written to the calib directory
+                calib_file = calib_resolve.detector_file_resolver(
+                    self.config, self.context, hdrm, logger=self.logger)
                 if camera=='IFS':
                     bpm = self.context.bpm_ifs
-                    master_bpm = fits.getdata(calib_dir+bpm)
+                    master_bpm = fits.getdata(calib_file('bpm', bpm))
                     if mclock == '9.0 MHz':
                         lin_filename=self.context.lin_coeff_ifs_fast0p6
                         readnoise = self.context.sig_map_ifs_fast0p6
@@ -136,7 +141,7 @@ class CalibPostProcessSA(BasePrimitive):
 
                 if camera=='Im':
                     bpm = self.context.bpm_img
-                    master_bpm = fits.getdata(calib_dir+bpm)
+                    master_bpm = fits.getdata(calib_file('bpm', bpm))
                     if mclock == '9.0 MHz':
                         lin_filename=self.context.lin_coeff_img_fast0p6
                         readnoise = self.context.sig_map_img_fast0p6
@@ -155,8 +160,8 @@ class CalibPostProcessSA(BasePrimitive):
                         gain = self.context.gain_img_slow
                         sat_map_file = self.context.sat_map_img_slow
 
-                SIG_map = fits.getdata(calib_dir+readnoise)
-                with fits.open(calib_dir+sat_map_file) as hdul:
+                SIG_map = fits.getdata(calib_file('readnoise', readnoise))
+                with fits.open(calib_file('saturation', sat_map_file)) as hdul:
                     sat_map = np.asarray(hdul["SATURATION"].data, dtype=float)
                 lin_output_path = os.path.join(calib_dir,lin_filename)
                 

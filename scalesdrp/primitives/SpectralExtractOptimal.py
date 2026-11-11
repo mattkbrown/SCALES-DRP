@@ -140,7 +140,8 @@ class SpectralExtractOptimal(BasePrimitive):
             if self.config.instrument.apply_lens_flat == True:
                 
                 norm_flatlens,norm_flatlens_uncert = scbasic.load_and_normalize_lenslet_flat(
-                    ifsmode, logger=self.logger)
+                    ifsmode, logger=self.logger, config=self.config,
+                    header=self.action.args.ccddata.header)
                 A_opt, A_opt_err = scbasic.apply_flatlens(
                     A_opt,
                     A_opt_err,

@@ -2499,8 +2499,6 @@ class ProcessMonochrom(BasePrimitive):
         output_dir = self.config.instrument.output_directory
         plot_dir = self.config.instrument.plot_directory
         package = __name__.split('.')[0]
-        calibfilepath = self.context.calib_file_path
-        calib_dir = str(get_resource_path(package, calibfilepath))+'/'
         create_rectmat = bool(self.config.instrument.create_rectmat)
 
         if not create_rectmat:

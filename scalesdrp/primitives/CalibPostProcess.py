@@ -45,8 +45,6 @@ class CalibPostProcess(BasePrimitive):
         output_dir = self.config.instrument.output_directory
         plot_dir = self.config.instrument.plot_directory
         package = __name__.split('.')[0]
-        calibfilepath = self.context.calib_file_path
-        calib_dir = str(get_resource_path(package, calibfilepath))+'/'    
 
         l1_groups = []
 

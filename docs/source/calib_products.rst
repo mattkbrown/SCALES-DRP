@@ -295,9 +295,27 @@ The rectification calibration consists of:
 
 * ``posarr`` — positional calibration array containing the detector coordinates, extraction regions, and spot intensities for every wavelength and lenslet.
 
-* ``QL_rectmat`` — sparse rectification matrix used by the quicklook and optimal extraction pipeline to map detector pixels into extracted spectral flux.
+* ``<mode>_OPT[_intp]_rectmat.fits`` — sparse rectification matrix used by the optimal extraction to map detector pixels into extracted spectral flux.
 
-* ``C2_rectmat`` — sparse forward-model rectification matrix used by the science-grade χ² extraction to model detector images from spectral flux.
+* ``<mode>_C2[_intp]_rectmat.fits`` — sparse forward-model rectification matrix used by the science-grade χ² extraction to model detector images from spectral flux.
+
+* ``<mode>_OPT[_intp]_lsf.fits`` and ``_lflat.fits`` — the line spread function and lenslet flat derived from the OPT matrix, with ``RMATFILE`` / ``RMATMD5`` naming the matrix they came from.
+
+``_intp`` files are built on the interpolated PSF grid. Each rectification matrix file contains:
+
+* ``PRIMARY`` — header only: the IFS mode and instrument state of the monochromator frames (``IFSMODE``, ``STATEID``, ``MODSLNAM``, ``DSPRSNAM``, ``DATE-OBS``, ``MJD-OBS``), the cube layout (``NLAM``, ``NLENSY``, ``NLENSX``, ``MORIENT``) and the parameters the matrix was built with (``RFLXCUT``, ``CROPSIZE``, ``NINTERP``, ``LAMMIN``/``LAMMAX``, spot-finding thresholds).
+
+* ``MATRIX_COO`` — the nonzero entries of the matrix (X, Y, VALUE).
+
+* ``WAVELENGTH`` — the wavelength (µm) of every slice of the extracted cube; for matrices built directly from the frames, also the monochromator wavelength of each.
+
+* ``LENSMAP`` — for every lenslet, the number of cube slices in which it has a response (0 = not in the matrix).
+
+* ``SOURCES`` — the monochromator frames the matrix was built from (non-interpolated matrices).
+
+The extraction takes the cube shape and wavelength axis from these files: a non-linear wavelength grid is written to the extracted cube as a ``WAVE-TAB`` lookup table.
+
+Bad pixel matrices are not calibration products: the pipeline builds them from the bad pixel mask when needed (using the rectification matrix for IFS science frames, so bad pixels are filled only from their own lenslet) and caches them.
 
 Output
 ^^^^^^

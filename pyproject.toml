@@ -47,6 +47,7 @@ start_scales_reduce   = "scalesdrp.scripts.reduce_scales:main"
 start_scales_calib    = "scalesdrp.scripts.scales_calib:main"
 start_scales_calib_sa = "scalesdrp.scripts.scales_calib_sa:main"
 start_scales_rti      = "scalesdrp.scripts.scales_rti:main"
+scales_caldb          = "scalesdrp.scripts.scales_caldb:main"
 
 [tool.poetry]
 packages = [{ include = "scalesdrp" }]

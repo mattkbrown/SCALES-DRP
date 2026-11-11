@@ -159,9 +159,12 @@ def test_ifs_science_frame_bpmat_uses_the_modes_rectmat(tmp_path, monkeypatch):
     cfg, ctx, hdr = ifs_frame_setup(tmp_path, monkeypatch)
     bpmat._memo.clear()
     bpm_path = calib_resolve.resolve_bpm(cfg, ctx, hdr)
-    calib_resolve.resolve_bpmat(cfg, ctx, hdr, bpm_path)
+    _, history = calib_resolve.resolve_bpmat(cfg, ctx, hdr, bpm_path)
     h, = cached_headers(tmp_path)
     assert h["RMATFILE"] == "LowRes-K_OPT.fits"
+    line, = history
+    assert "LowRes-K_OPT.fits" in line and calib_resolve.describe(
+        str(tmp_path / "calib" / "LowRes-K_OPT.fits")) in line
 
 
 def test_calibration_frame_bpmat_does_not_use_a_rectmat(tmp_path, monkeypatch):
@@ -177,7 +180,8 @@ def test_missing_rectmat_falls_back_to_the_bpm_alone(tmp_path, monkeypatch):
     cfg, ctx, hdr = ifs_frame_setup(tmp_path, monkeypatch, with_rectmat=False)
     bpmat._memo.clear()
     bpm_path = calib_resolve.resolve_bpm(cfg, ctx, hdr)
-    m = calib_resolve.resolve_bpmat(cfg, ctx, hdr, bpm_path)
+    m, history = calib_resolve.resolve_bpmat(cfg, ctx, hdr, bpm_path)
     assert m.shape == (rectmat_io.N_DET_PIX, rectmat_io.N_DET_PIX)
     h, = cached_headers(tmp_path)
     assert h["RMATFILE"] == "NONE"
+    assert history[0].endswith("built from that bad pixel map alone")

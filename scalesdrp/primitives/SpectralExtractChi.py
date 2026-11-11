@@ -177,15 +177,18 @@ class SpectralExtractChi(BasePrimitive):
 
                 if self.config.instrument.apply_lens_flat == True:
 
-                    norm_flatlens, norm_flatlens_uncert = scbasic.load_and_normalize_lenslet_flat(
+                    norm_flatlens, norm_flatlens_uncert, flatlens_path = scbasic.load_and_normalize_lenslet_flat(
                         ifsmode, logger=self.logger, config=self.config,
-                        header=header)
+                        header=header, with_path=True)
                     Amp_chi_square, Amp_chi_square_err = scbasic.apply_flatlens(
                         Amp_chi_square,
                         Amp_chi_square_err,
                         norm_flatlens,
                         norm_flatlens_uncert,
                         imtype='FLATLENS')
+                    self.action.args.ccddata.header['HISTORY'] = (
+                        f'Lenslet flat applied using {calib_resolve.describe(flatlens_path)}'
+                        if flatlens_path else f'No lenslet flat found for {ifsmode}; NOT applied')
 
                 wcs, wave_info = scbasic.create_scales_wcs(
                     cube_shape=Amp_chi_square.shape,
@@ -198,7 +201,8 @@ class SpectralExtractChi(BasePrimitive):
                     wcs=wcs,
                     wave_info=wave_info)
 
-                self.action.args.ccddata.header['HISTORY'] = (f'chi_square extraction performed using {os.path.basename(rmat_chi)}')
+                self.action.args.ccddata.header['HISTORY'] = (f'chi_square extraction performed using {calib_resolve.describe(rmat_chi)}')
+                self.action.args.ccddata.header['HISTORY'] = (f'starting from an optimal extraction using {calib_resolve.describe(rmat_opt)}')
                 self.action.args.ccddata.header['HISTORY'] = (
                     f"WCS keywords updated ({wave_info['WAVEGRID'].lower()} wavelength axis).")
 

@@ -3417,7 +3417,7 @@ def _read_matching_master(path, expected_keywords, master_type):
 
 
 def load_single_master_file(expected_keywords, master_type, config=None, header=None,
-                            logger=None):
+                            logger=None, with_path=False):
     """
     Load one matching master calibration file: from ./redux (tonight's
     masters) first, then the caldb (if config has use_caldb and header, the
@@ -3429,9 +3429,11 @@ def load_single_master_file(expected_keywords, master_type, config=None, header=
     - EXPTIME must match only for DARK. The caldb has no exposure time
       column, so caldb darks are checked by their header, newest first.
     - If no matching file is found, return (None, None).
+    - with_path=True returns (data, uncert, path of the file used).
     """
 
     master_type = master_type.upper()
+    not_found = (None, None, None) if with_path else (None, None)
 
     tail_map = {
         "DARK": "_mdark.fits",
@@ -3441,7 +3443,7 @@ def load_single_master_file(expected_keywords, master_type, config=None, header=
 
     tail = tail_map.get(master_type)
     if tail is None:
-        return (None, None)
+        return not_found
 
     def dir_candidates(base):
         if base is None or not os.path.isdir(base):
@@ -3467,8 +3469,8 @@ def load_single_master_file(expected_keywords, master_type, config=None, header=
         for path in candidates:
             found = _read_matching_master(path, expected_keywords, master_type)
             if found is not None:
-                return found
-    return (None, None)
+                return found + (path,) if with_path else found
+    return not_found
 #################################################################################
 
 def select_ifsmode(modslnam, dsprsnam, filtername=None):
@@ -3530,14 +3532,16 @@ def load_and_normalize_lenslet_flat(
     method='median',
     logger=None,
     config=None,
-    header=None):
+    header=None,
+    with_path=False):
     """
     Find a lenslet flat cube by IFSMODE, ensure it's a 3D cube,
     load (data, uncert), normalize each slice, and propagate uncertainties.
     Search order: <prefix>_cube_flatlens.fits in ./redux/, then the caldb
     (cal_type lenslet_flat; if config has use_caldb and header, the frame's
     header, is given), then <prefix>_cube_flatlens.fits in pkg calib/.
-    Returns (flat_norm, flat_norm_uncert) or (None, None).
+    Returns (flat_norm, flat_norm_uncert) or (None, None); with with_path,
+    also the path of the file used (None if none was found).
     logger: Logger for debug messages (e.g. the primitive's self.logger).
         Defaults to this module's logger.
     """
@@ -3604,7 +3608,7 @@ def load_and_normalize_lenslet_flat(
 
     if flat is None:
         print(f"No lenslet flat cube found for IFSMODE={ifsmode}.")
-        return None, None
+        return (None, None, None) if with_path else (None, None)
 
     print(f"Loaded lenslet flat cube: {os.path.basename(path_used)}")
 
@@ -3659,6 +3663,8 @@ def load_and_normalize_lenslet_flat(
                 flat_norm_uncert[k, invalid] = np.nan
 
     print(f"Normalized lenslet flat cube for IFSMODE={ifsmode}.")
+    if with_path:
+        return flat_norm, flat_norm_uncert, path_used
     return flat_norm, flat_norm_uncert
 
 ##################### flat correction to the cube ##############################

@@ -146,20 +146,22 @@ def _expected_header(bpm_path, rect_path, bpm_md5, rect_md5, min_good, max_box):
 
 
 def get_bpmat(bpm_path, rectmat_path=None, cache_dir=None, min_good_pixels=MIN_GOOD_PIXELS,
-              max_box_size=MAX_BOX_SIZE, lenslet_grid=None, logger=None):
+              max_box_size=MAX_BOX_SIZE, lenslet_grid=None, logger=None, return_path=False):
     """
     The bpmat for a bad pixel mask (and rectmat), from the cache or built
-    and cached now. Returns a scipy.sparse CSR matrix.
+    and cached now. Returns a scipy.sparse CSR matrix, or (matrix, path of
+    the cached bpmat file) with return_path.
     """
     logger = logger or log
     bpm_md5 = file_md5(bpm_path)
     rect_md5 = file_md5(rectmat_path) if rectmat_path else None
     key = _cache_key(bpm_md5, rect_md5, min_good_pixels, max_box_size)
-    if key in _memo:
-        _memo.move_to_end(key)
-        return _memo[key]
-
     path = os.path.join(cache_root(cache_dir), "derived", "bpmat", key + ".fits")
+    if (key, path) in _memo:
+        _memo.move_to_end((key, path))
+        matrix = _memo[(key, path)]
+        return (matrix, path) if return_path else matrix
+
     expected = _expected_header(bpm_path, rectmat_path, bpm_md5, rect_md5,
                                 min_good_pixels, max_box_size)
     with file_lock(path):
@@ -175,10 +177,10 @@ def get_bpmat(bpm_path, rectmat_path=None, cache_dir=None, min_good_pixels=MIN_G
             os.replace(tmp, path)
             logger.info(f"Cached bpmat {path}")
 
-    _memo[key] = matrix
+    _memo[(key, path)] = matrix
     while len(_memo) > _MEMO_SIZE:
         _memo.popitem(last=False)
-    return matrix
+    return (matrix, path) if return_path else matrix
 
 
 def _read_cached(path, expected, logger):

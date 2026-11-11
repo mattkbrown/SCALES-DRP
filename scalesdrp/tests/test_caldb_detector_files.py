@@ -163,3 +163,36 @@ def test_no_lenslet_flat_anywhere(env):
     cfg, ctx, _, _ = env([])
     assert scbasic.load_and_normalize_lenslet_flat("LowRes-K", config=cfg,
                                                    header=ifs_header()) == (None, None)
+
+
+# ---------- HISTORY: exactly which file ----------
+
+def test_describe_names_the_caldb_record_and_md5(env):
+    content = fits_bytes(np.ones((2, 2)))
+    cfg, ctx, _, _ = env([(record("rn5", content, "readnoise"), content)])
+    path = calib_resolve.detector_file_resolver(cfg, ctx, ifs_header())("readnoise", "x.fits")
+    text = calib_resolve.describe(path)
+    assert text == f"rn5.fits (caldb id rn5; md5 {hashlib.md5(content).hexdigest()})"
+
+
+def test_describe_names_the_directory_of_a_local_file(env):
+    cfg, ctx, _, calib = env([])
+    (calib / "sat.fits").write_bytes(b"abc")
+    text = calib_resolve.describe(str(calib / "sat.fits"))
+    assert text == f"sat.fits ({calib}; md5 {hashlib.md5(b'abc').hexdigest()})"
+    assert calib_resolve.describe(str(calib / "gone.fits")).endswith("file missing)")
+
+
+def test_master_and_lenslet_flat_loaders_report_the_file_used(env):
+    bias = fits_bytes(np.full((2, 2), 1.0), IMTYPE="BIAS", CAMERA="IFS", MCLOCK="5.0 MHz")
+    cube = fits_bytes(np.ones((3, 2, 2)), IFSMODE="LowRes-K")
+    cfg, ctx, _, _ = env([(record("b", bias, "bias"), bias),
+                          (record("lf", cube, "lenslet_flat", mode="LowRes-K"), cube)])
+    keys = {"CAMERA": "IFS", "MCLOCK": "5.0 MHz"}
+    *_, path = scbasic.load_single_master_file(keys, "BIAS", config=cfg, header=ifs_header(),
+                                               with_path=True)
+    assert path.endswith("b.fits")
+    *_, path = scbasic.load_and_normalize_lenslet_flat("LowRes-K", config=cfg, header=ifs_header(),
+                                                       with_path=True)
+    assert path.endswith("lf.fits")
+    assert scbasic.load_single_master_file(keys, "DARK", with_path=True) == (None, None, None)

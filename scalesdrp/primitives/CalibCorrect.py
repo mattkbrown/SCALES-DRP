@@ -10,6 +10,7 @@ from tqdm import tqdm
 from astropy.nddata import StdDevUncertainty
 from scalesdrp.core.scales_proctab import Proctab
 from scalesdrp.core.scales_pkg_resources import get_resource_path
+from scalesdrp.core import calib_resolve
 import logging
 log = logging.getLogger("SCALES")
 
@@ -91,39 +92,48 @@ class CalibCorrect(BasePrimitive):
                 for key in ['CAMERA', 'MCLOCK', 'EXPTIME']}
 
             if self.config.instrument.apply_dark == True:
-                m_dark, m_dark_uncert = scbasic.load_single_master_file(
+                m_dark, m_dark_uncert, m_dark_path = scbasic.load_single_master_file(
                     keywords_unique, master_type='DARK', config=self.config,
-                    header=self.action.args.ccddata.header, logger=self.logger)
-                if m_dark is not None:
+                    header=self.action.args.ccddata.header, logger=self.logger,
+                    with_path=True)
+                if m_dark is None:
+                    self.action.args.ccddata.header['HISTORY'] = 'No matching master DARK found; NOT applied'
+                else:
                     final_ramp, final_uncert = scbasic.apply_calibration(
                         final_ramp,
                         final_uncert,
                         m_dark,
                         m_dark_uncert,
                         imtype='DARK')
-                    self.action.args.ccddata.header['HISTORY'] = 'Dark subtracted.'
+                    self.action.args.ccddata.header['HISTORY'] = f'Master dark subtracted using {calib_resolve.describe(m_dark_path)}'
                     self.logger.info("+++++++++++ Master dark subtracted +++++++++++")
 
             if self.config.instrument.apply_bias == True:
-                m_bias, m_bias_uncert = scbasic.load_single_master_file(
+                m_bias, m_bias_uncert, m_bias_path = scbasic.load_single_master_file(
                     keywords_unique, master_type='BIAS', config=self.config,
-                    header=self.action.args.ccddata.header, logger=self.logger)
-                if m_bias is not None:
+                    header=self.action.args.ccddata.header, logger=self.logger,
+                    with_path=True)
+                if m_bias is None:
+                    self.action.args.ccddata.header['HISTORY'] = 'No matching master BIAS found; NOT applied'
+                else:
                     final_ramp, final_uncert = scbasic.apply_calibration(
                         final_ramp,
                         final_uncert,
                         m_bias,
                         m_bias_uncert,
                         imtype='BIAS')
-                    self.action.args.ccddata.header['HISTORY'] = 'Bias subtraction applied.'
+                    self.action.args.ccddata.header['HISTORY'] = f'Master bias subtracted using {calib_resolve.describe(m_bias_path)}'
                     self.logger.info("+++++++++++ Master bias subtracted +++++++++++")
 
             if self.config.instrument.apply_det_flat == True:
                 
-                m_flat, m_flat_uncert = scbasic.load_single_master_file(
+                m_flat, m_flat_uncert, m_flat_path = scbasic.load_single_master_file(
                     keywords_unique, master_type='FLATLAMP', config=self.config,
-                    header=self.action.args.ccddata.header, logger=self.logger)
-                if m_flat is not None:
+                    header=self.action.args.ccddata.header, logger=self.logger,
+                    with_path=True)
+                if m_flat is None:
+                    self.action.args.ccddata.header['HISTORY'] = 'No matching master FLATLAMP found; NOT applied'
+                else:
                     norm_flat,norm_flat_uncert = scbasic.normalize_detector_flat(m_flat,m_flat_uncert)
                     final_ramp, final_uncert = scbasic.apply_calibration(
                         final_ramp,
@@ -131,7 +141,7 @@ class CalibCorrect(BasePrimitive):
                         norm_flat,
                         norm_flat_uncert,
                         imtype='FLATLAMP')
-                    self.action.args.ccddata.header['HISTORY'] = 'Detector Flat correction applied.'
+                    self.action.args.ccddata.header['HISTORY'] = f'Detector flat correction applied using {calib_resolve.describe(m_flat_path)}'
                     self.logger.info("+++++++++++ detector flat correction completed  +++++++++++")
 
             if self.config.instrument.subtract_row_median==True:

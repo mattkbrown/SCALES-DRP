@@ -139,15 +139,18 @@ class SpectralExtractOptimal(BasePrimitive):
 
             if self.config.instrument.apply_lens_flat == True:
                 
-                norm_flatlens,norm_flatlens_uncert = scbasic.load_and_normalize_lenslet_flat(
+                norm_flatlens,norm_flatlens_uncert,flatlens_path = scbasic.load_and_normalize_lenslet_flat(
                     ifsmode, logger=self.logger, config=self.config,
-                    header=self.action.args.ccddata.header)
+                    header=self.action.args.ccddata.header, with_path=True)
                 A_opt, A_opt_err = scbasic.apply_flatlens(
                     A_opt,
                     A_opt_err,
                     norm_flatlens,
                     norm_flatlens_uncert,
                     imtype='FLATLENS')
+                self.action.args.ccddata.header['HISTORY'] = (
+                    f'Lenslet flat applied using {calib_resolve.describe(flatlens_path)}'
+                    if flatlens_path else f'No lenslet flat found for {ifsmode}; NOT applied')
 
             wcs, wave_info = scbasic.create_scales_wcs(
                 cube_shape=A_opt.shape,
@@ -186,7 +189,7 @@ class SpectralExtractOptimal(BasePrimitive):
             self.action.args.ccddata.header.update(final_header)
             self.action.args.ccddata.header['HISTORY'] = (
                 f"WCS keywords updated ({wave_info['WAVEGRID'].lower()} wavelength axis).")
-            self.action.args.ccddata.header['HISTORY'] = (f'Optimal extraction performed using {os.path.basename(rmat_opt)}')
+            self.action.args.ccddata.header['HISTORY'] = (f'Optimal extraction performed using {calib_resolve.describe(rmat_opt)}')
             
             scales_fits_writer(ccddata = opt_rslt,
                 table=self.action.args.table,

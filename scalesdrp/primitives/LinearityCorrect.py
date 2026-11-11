@@ -138,7 +138,7 @@ class LinearityCorrect(BasePrimitive):
                             )
                         )
                     self.action.args.ccddata.data = corrected_cube
-                    self.action.args.ccddata.header['HISTORY'] = (f'Linearity correction applied using {os.path.basename(lin_coeff)}')
+                    self.action.args.ccddata.header['HISTORY'] = (f'Linearity correction applied using {calib_resolve.describe(lin_coeff)}')
                     
                     fig, axes = scbasic.plot_linearity_correction_diagnostics(
                         raw_cube=sci_im_full_original,

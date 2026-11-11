@@ -25,6 +25,7 @@ from astropy.time import Time
 
 from scalesdrp.core import rectmat_io
 from scalesdrp.core.caldb import CalDBClient, CalDBError, CalibStore
+from scalesdrp.core.calib_cache import file_md5
 from scalesdrp.core.scales_pkg_resources import get_resource_path
 
 log = logging.getLogger("SCALES")
@@ -81,6 +82,25 @@ def header_obs_time(header):
     if mjd is not None:
         return Time(float(mjd), format="mjd", scale="utc").to_datetime(timezone=timezone.utc)
     return None
+
+
+def describe(path):
+    """
+    Exactly which file `path` is, for HISTORY: its name, where it came from
+    (the caldb record id for a file from the caldb cache, otherwise its
+    directory) and its MD5.
+    """
+    if path is None:
+        return "NONE"
+    path = os.path.abspath(str(path))
+    parent = os.path.dirname(path)
+    files_dir = os.path.dirname(parent)
+    if os.path.basename(files_dir) == "files" and os.path.basename(os.path.dirname(files_dir)) == "caldb":
+        source = f"caldb id {os.path.basename(parent)}"
+    else:
+        source = parent
+    md5 = file_md5(path) if os.path.isfile(path) else "file missing"
+    return f"{os.path.basename(path)} ({source}; md5 {md5})"
 
 
 def detector_of(header):
@@ -220,6 +240,9 @@ def resolve_bpmat(config, context, header, bpm_path, use_rectmat=True, logger=No
 
     Calibration frames taken before a rectmat exists pass use_rectmat=False,
     or simply get the BPM-only bpmat if no rectmat is found.
+
+    Returns (matrix, history): history is a list of HISTORY lines naming the
+    cached bpmat and exactly which rectmat (if any) it was built from.
     """
     from scalesdrp.core import bpmat
     logger = logger or log
@@ -235,5 +258,9 @@ def resolve_bpmat(config, context, header, bpm_path, use_rectmat=True, logger=No
                 logger.warning(f"{e} Building the bpmat from the bad pixel mask alone.")
             grid_key = "medres_lenslet_grid" if ifsmode.startswith("MedRes") else "lowres_lenslet_grid"
             lenslet_grid = getattr(context, grid_key, None)
-    return bpmat.get_bpmat(bpm_path, rect_path, cache_dir=caldb_settings(config)["cache_dir"],
-                           lenslet_grid=lenslet_grid, logger=logger)
+    matrix, bpmat_path = bpmat.get_bpmat(
+        bpm_path, rect_path, cache_dir=caldb_settings(config)["cache_dir"],
+        lenslet_grid=lenslet_grid, logger=logger, return_path=True)
+    history = [f"bad pixel matrix {describe(bpmat_path)} built from that bad pixel map"
+               + (f" and rectmat {describe(rect_path)}" if rect_path else " alone")]
+    return matrix, history

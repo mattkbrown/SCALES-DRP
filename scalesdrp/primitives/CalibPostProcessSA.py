@@ -119,8 +119,8 @@ class CalibPostProcessSA(BasePrimitive):
                 calib_file = calib_resolve.detector_file_resolver(
                     self.config, self.context, hdrm, logger=self.logger)
                 if camera=='IFS':
-                    bpm = self.context.bpm_ifs
-                    master_bpm = fits.getdata(calib_file('bpm', bpm))
+                    bpm = calib_file('bpm', self.context.bpm_ifs)
+                    master_bpm = fits.getdata(bpm)
                     if mclock == '9.0 MHz':
                         lin_filename=self.context.lin_coeff_ifs_fast0p6
                         readnoise = self.context.sig_map_ifs_fast0p6
@@ -140,8 +140,8 @@ class CalibPostProcessSA(BasePrimitive):
                         sat_map_file = self.context.sat_map_ifs_slow
 
                 if camera=='Im':
-                    bpm = self.context.bpm_img
-                    master_bpm = fits.getdata(calib_file('bpm', bpm))
+                    bpm = calib_file('bpm', self.context.bpm_img)
+                    master_bpm = fits.getdata(bpm)
                     if mclock == '9.0 MHz':
                         lin_filename=self.context.lin_coeff_img_fast0p6
                         readnoise = self.context.sig_map_img_fast0p6
@@ -160,10 +160,17 @@ class CalibPostProcessSA(BasePrimitive):
                         gain = self.context.gain_img_slow
                         sat_map_file = self.context.sat_map_img_slow
 
-                SIG_map = fits.getdata(calib_file('readnoise', readnoise))
-                with fits.open(calib_file('saturation', sat_map_file)) as hdul:
+                readnoise_path = calib_file('readnoise', readnoise)
+                sat_map_path = calib_file('saturation', sat_map_file)
+                SIG_map = fits.getdata(readnoise_path)
+                with fits.open(sat_map_path) as hdul:
                     sat_map = np.asarray(hdul["SATURATION"].data, dtype=float)
                 lin_output_path = os.path.join(calib_dir,lin_filename)
+                # The exact input files, recorded in the linearity file
+                lin_header = fits.Header()
+                lin_header.add_history(f"Bad pixel map: {calib_resolve.describe(bpm)}")
+                lin_header.add_history(f"Readnoise map: {calib_resolve.describe(readnoise_path)}")
+                lin_header.add_history(f"Saturation map: {calib_resolve.describe(sat_map_path)}")
                 
                 results = linearity_create.run_linearity_calibration(
                     ramps=lin_data,
@@ -191,6 +198,7 @@ class CalibPostProcessSA(BasePrimitive):
                     rcond=None,
                     progress=True,
                     overwrite=True,
+                    primary_header=lin_header,
                     metadata={
                     "SATFRAC": 0.95,
                     "SKIPREAD": 2,

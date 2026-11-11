@@ -3765,9 +3765,17 @@ def _parse_sky_coord(coord_val: [str, float], is_ra: bool = False) -> float:
 def create_scales_wcs(
     cube_shape: tuple,
     header: fits.Header,
-    center_map_is_zero_indexed: bool = True):
+    center_map_is_zero_indexed: bool = True,
+    wavelengths=None):
     """
     Create PC + CDELT WCS for a SCALES IFS cube.
+
+    wavelengths : array of n_wave floats [um], optional
+        Wavelength of each cube slice, from the rectmat's WAVELENGTH table.
+        If the grid is linear the spectral axis is linear (CDELT3); if not,
+        wave_info["WAVEGRID"] is "TABLE" and wcs_header_update writes a
+        WAVE-TAB lookup table (see wavelength_table_hdu). Without it the
+        per-mode start/end below is used, assuming a linear grid.
 
     Cube shape:
         cube_shape = (n_wave, ny, nx)
@@ -3795,6 +3803,8 @@ def create_scales_wcs(
         "LowRes-SED":   (50, 60),
         "LowRes-KL": (50, 60),
         "LowRes-PAH": (50, 60),
+        "LowRes-KLM": (50, 60),
+        "LowRes-Ls": (50, 60),
         "MedRes-K":   (50, 60),
         "MedRes-L":   (50, 60),
         "MedRes-M":   (50, 60),
@@ -3809,6 +3819,8 @@ def create_scales_wcs(
         "LowRes-SED":   {"start": 2.0,  "end": 5.0},
         "LowRes-KL": {"start": 2.0,  "end": 3.7},
         "LowRes-PAH": {"start": 3.1,  "end": 3.5},
+        "LowRes-KLM": {"start": 2.0,  "end": 5.2},
+        "LowRes-Ls": {"start": 3.1,  "end": 3.5},
         "MedRes-K":   {"start": 2.02,  "end": 2.38},
         "MedRes-L":   {"start": 2.9,  "end": 4.15},
         "MedRes-M":   {"start": 4.5,  "end": 5.2},
@@ -3850,8 +3862,17 @@ def create_scales_wcs(
 
     # Wavelength range in microns
     wave_cfg = wave_config_um.get(ifs_mode)
+    wave_grid = "LINEAR"
 
-    if wave_cfg is not None:
+    if wavelengths is not None:
+        wavelengths = np.asarray(wavelengths, dtype=float)
+        if wavelengths.shape != (n_wave,):
+            raise ValueError(f"{wavelengths.size} wavelengths for a cube with {n_wave} slices.")
+        wavstart_um = float(wavelengths[0])
+        wavend_um = float(wavelengths[-1])
+        if not rectmat_io.is_uniform(wavelengths):
+            wave_grid = "TABLE"
+    elif wave_cfg is not None:
         wavstart_um = float(wave_cfg["start"])
         wavend_um = float(wave_cfg["end"])
     else:
@@ -3921,9 +3942,36 @@ def create_scales_wcs(
         "WAVEND": wavend_um,
         "DWAVE": dwave_um,
         "WAVEUNIT": "um",
+        "WAVEGRID": wave_grid,
+        "WAVELENGTHS": wavelengths,
     }
 
     return wcs, wave_info
+
+
+WAVETAB_EXTNAME = "WCS-TAB"
+
+
+def wavelength_table_hdu(wavelengths):
+    """
+    The WAVE-TAB lookup table (FITS WCS Paper III) for a non-linear
+    wavelength axis: one row, column COORDS holding the wavelength [um] of
+    each cube slice. Written alongside a cube whose header came from
+    wcs_header_update with wave_info["WAVEGRID"] == "TABLE".
+    """
+    w = np.asarray(wavelengths, dtype=np.float64)
+    col = fits.Column(name="COORDS", format=f"{w.size}D", dim=f"(1,{w.size})",
+                      unit="um", array=w.reshape(1, w.size, 1))
+    hdu = fits.BinTableHDU.from_columns([col], name=WAVETAB_EXTNAME)
+    hdu.header["EXTDESC"] = "wavelength [um] of each cube slice (WAVE-TAB)"
+    return hdu
+
+
+def wavelength_extra_hdus(wave_info):
+    """Extensions to write with a cube: the WCS-TAB table if its axis needs one."""
+    if wave_info.get("WAVEGRID") == "TABLE":
+        return [wavelength_table_hdu(wave_info["WAVELENGTHS"])]
+    return []
 
 
 def wcs_header_update(
@@ -3950,20 +3998,30 @@ def wcs_header_update(
     # --------------------------------------------------
     # Force final spectral WCS to microns for DS9 display
     # --------------------------------------------------
-    output_header["CTYPE3"] = ("WAVE", "Wavelength axis")
     output_header["CUNIT3"] = ("um", "Wavelength unit")
-    output_header["CRVAL3"] = (
-        float(wave_info["WAVSTART"]),
-        "Reference wavelength in micron",
-    )
     output_header["CRPIX3"] = (
         1.0,
         "Reference wavelength pixel",
     )
-    output_header["CDELT3"] = (
-        float(wave_info["DWAVE"]),
-        "Wavelength step in micron/pixel",
-    )
+    if wave_info.get("WAVEGRID") == "TABLE":
+        # Slice p (1 indexed) has the wavelength in element p of the
+        # COORDS column of the WCS-TAB extension (wavelength_table_hdu)
+        output_header["CTYPE3"] = ("WAVE-TAB", "Wavelength axis, lookup table")
+        output_header["CRVAL3"] = (1.0, "Lookup table index of CRPIX3")
+        output_header["CDELT3"] = (1.0, "Lookup table index step")
+        output_header["PS3_0"] = (WAVETAB_EXTNAME, "Extension with the wavelength table")
+        output_header["PS3_1"] = ("COORDS", "Column with the wavelengths")
+        output_header["PV3_3"] = (1, "Axis number in the table")
+    else:
+        output_header["CTYPE3"] = ("WAVE", "Wavelength axis")
+        output_header["CRVAL3"] = (
+            float(wave_info["WAVSTART"]),
+            "Reference wavelength in micron",
+        )
+        output_header["CDELT3"] = (
+            float(wave_info["DWAVE"]),
+            "Wavelength step in micron/pixel",
+        )
 
     # Stable spectral PC matrix for DS9
     output_header["PC3_3"] = (1.0, "Spectral axis scale")
@@ -4008,6 +4066,11 @@ def wcs_header_update(
     output_header["WAVEUNIT"] = (
         "um",
         "Pipeline wavelength unit",
+    )
+
+    output_header["WAVEGRID"] = (
+        wave_info.get("WAVEGRID", "LINEAR"),
+        "LINEAR (CDELT3) or TABLE (WCS-TAB extension)",
     )
 
     output_header["WCSCORR"] = (

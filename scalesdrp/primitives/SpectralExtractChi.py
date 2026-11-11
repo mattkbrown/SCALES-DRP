@@ -18,6 +18,7 @@ from astropy.coordinates import Angle
 from astropy.wcs import WCS
 import os
 import scalesdrp.primitives.scales_basic as scbasic
+from scalesdrp.core import calib_resolve, rectmat_io
 from scalesdrp.core.scales_proctab import Proctab
 from scalesdrp.core.scales_pkg_resources import get_resource_path
 import logging
@@ -100,55 +101,32 @@ class SpectralExtractChi(BasePrimitive):
                     "Skipping spectral extraction.")
                 return self.action.args
 
-            elif ifsmode=='LowRes-K':
-                rmat_opt = self.context.OPT_rmat_LowRes_K
-                rmat_chi = self.context.C2_rmat_LowRes_K
-                lenslet_grid = self.context.lowres_lenslet_grid
-            elif ifsmode=='LowRes-L':
-                rmat_opt = self.context.OPT_rmat_LowRes_L
-                rmat_chi = self.context.C2_rmat_LowRes_L
-                lenslet_grid = self.context.lowres_lenslet_grid
-            elif ifsmode=='LowRes-M':
-                rmat_chi = self.context.C2_rmat_LowRes_M
-                rmat_opt = self.context.OPT_rmat_LowRes_M
-                lenslet_grid = self.context.lowres_lenslet_grid
-            elif ifsmode=='LowRes-KLM':
-                rmat_opt = self.context.OPT_rmat_LowRes_KLM
-                rmat_chi = self.context.C2_rmat_LowRes_KLM
-                lenslet_grid = self.context.lowres_lenslet_grid
-            elif ifsmode=='LowRes-KL':
-                rmat_opt = self.context.OPT_rmat_LowRes_KL
-                rmat_chi = self.context.C2_rmat_LowRes_KL
-                lenslet_grid = self.context.lowres_lenslet_grid
-            elif ifsmode=='LowRes-Ls':
-                rmat_opt = self.context.OPT_rmat_LowRes_Ls
-                rmat_chi = self.context.C2_rmat_LowRes_Ls
-                lenslet_grid = self.context.lowres_lenslet_grid
-            elif ifsmode=='MedRes-K':
-                rmat_opt = self.context.OPT_rmat_MedRes_K
-                rmat_chi = self.context.C2_rmat_MedRes_K
-                lenslet_grid = self.context.medres_lenslet_grid
-            elif ifsmode=='MedRes-L':
-                rmat_opt = self.context.OPT_rmat_MedRes_L
-                rmat_chi =self.context.C2_rmat_MedRes_L
-                lenslet_grid = self.context.medres_lenslet_grid
-            elif ifsmode=='MedRes-M':
-                rmat_opt =self.context.OPT_rmat_MedRes_M
-                rmat_chi = self.context.C2_rmat_MedRes_M
-                lenslet_grid = self.context.medres_lenslet_grid
 
-            # Cube shape (nlam, ny, nx) comes from the rectmats themselves:
-            # stored in them if written by save_rectmat, otherwise nlam is
-            # derived from their size and the lenslet grid.
-            R_for_extract, FLUX_SHAPE_3D = scbasic.load_rectmat(
-                calib_path+rmat_chi, lenslet_grid=lenslet_grid)
-            R_matrix, opt_shape = scbasic.load_rectmat(
-                calib_path+rmat_opt, lenslet_grid=lenslet_grid)
-            if opt_shape != FLUX_SHAPE_3D:
+            # Both rectmats come from the caldb (use_caldb) or the calib
+            # directory. The cube shape (nlam, ny, nx) and wavelengths come
+            # from the files; lenslet_grid is only used for legacy .npz
+            # rectmats that do not store their cube shape.
+            lenslet_grid = (self.context.medres_lenslet_grid if ifsmode.startswith('MedRes')
+                            else self.context.lowres_lenslet_grid)
+            header = self.action.args.ccddata.header
+            rmat_opt = calib_resolve.resolve_rectmat(
+                self.config, self.context, 'OPT', ifsmode, header, logger=self.logger)
+            rmat_chi = calib_resolve.resolve_rectmat(
+                self.config, self.context, 'C2', ifsmode, header, logger=self.logger)
+            rect_chi = rectmat_io.read_rectmat(rmat_chi, lenslet_grid=lenslet_grid)
+            rect_opt = rectmat_io.read_rectmat(rmat_opt, lenslet_grid=lenslet_grid)
+            R_for_extract, FLUX_SHAPE_3D = rect_chi.matrix, rect_chi.cube_shape
+            R_matrix = rect_opt.matrix
+            if rect_opt.cube_shape != FLUX_SHAPE_3D:
                 raise ValueError(
-                    f"{rmat_opt} implies cube shape {opt_shape} but {rmat_chi} "
+                    f"{rmat_opt} implies cube shape {rect_opt.cube_shape} but {rmat_chi} "
                     f"implies {FLUX_SHAPE_3D}; the OPT and C2 rectmats must "
                     f"come from the same calibration.")
+            if (rect_opt.wavelengths is not None and rect_chi.wavelengths is not None
+                    and not np.allclose(rect_opt.wavelengths, rect_chi.wavelengths)):
+                raise ValueError(f"{rmat_opt} and {rmat_chi} have different wavelength grids.")
+            wavelengths = (rect_chi.wavelengths if rect_chi.wavelengths is not None
+                           else rect_opt.wavelengths)
             self.logger.info(f"Cube shape {FLUX_SHAPE_3D} from {rmat_chi}")
 
             existing_l1_name = scbasic.find_existing_proc_file(
@@ -225,7 +203,8 @@ class SpectralExtractChi(BasePrimitive):
 
                 wcs, wave_info = scbasic.create_scales_wcs(
                     cube_shape=Amp_chi_square.shape,
-                    header=self.action.args.ccddata.header)
+                    header=self.action.args.ccddata.header,
+                    wavelengths=wavelengths)
 
                 final_header = scbasic.wcs_header_update(
                     data_cube=Amp_chi_square,
@@ -234,7 +213,8 @@ class SpectralExtractChi(BasePrimitive):
                     wave_info=wave_info)
 
                 self.action.args.ccddata.header['HISTORY'] = (f'chi_square extraction performed using {os.path.basename(rmat_chi)}')
-                self.action.args.ccddata.header['HISTORY'] = 'WCS keywords updated (purely linear).'
+                self.action.args.ccddata.header['HISTORY'] = (
+                    f"WCS keywords updated ({wave_info['WAVEGRID'].lower()} wavelength axis).")
 
                 chi_rslt = CCDData(
                     data=Amp_chi_square,
@@ -246,7 +226,8 @@ class SpectralExtractChi(BasePrimitive):
                     table=self.action.args.table,
                     output_file=self.action.args.name,
                     output_dir=self.config.instrument.output_directory,
-                    suffix="chi_L2")
+                    suffix="chi_L2",
+                    extra_hdus=scbasic.wavelength_extra_hdus(wave_info))
 
                 scbasic.proctab_update(
                     header=self.action.args.ccddata.header,

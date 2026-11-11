@@ -542,6 +542,7 @@ def scales_fits_writer(
     suffix=None,
     quality_map=None,
     chisq=None,
+    extra_hdus=None,
 ):
     """
     Write a KCCDData or CCDData object to a FITS file.
@@ -586,6 +587,10 @@ def scales_fits_writer(
     chisq : ndarray, optional
         2-D map of chi-square values from ramp fitting.
         Written as float32 in the CHISQ extension.
+
+    extra_hdus : list of HDU, optional
+        Appended after the other extensions (e.g. the WCS-TAB wavelength
+        table of a cube with a non-linear wavelength axis).
 
     Returns
     -------
@@ -788,6 +793,9 @@ def scales_fits_writer(
         )
 
         hdus_to_save.append(hdu_chisq)
+
+    for hdu in extra_hdus or []:
+        hdus_to_save.append(hdu)
 
     # ------------------------------------------------------------------
     # Write file

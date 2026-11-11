@@ -17,6 +17,7 @@ from astropy.coordinates import Angle
 from astropy.wcs import WCS
 import os
 import scalesdrp.primitives.scales_basic as scbasic
+from scalesdrp.core import calib_resolve, rectmat_io
 from scalesdrp.core.scales_proctab import Proctab
 from scalesdrp.core.scales_pkg_resources import get_resource_path
 import logging
@@ -63,9 +64,6 @@ class SpectralExtractOptimal(BasePrimitive):
                 'MedRes-M': (50, 60),}
 
             SCALES_DEFAULT_CENTER = (54, 54)
-            package = __name__.split('.')[0]
-            calibfilepath = self.context.calib_file_path
-            calib_path = str(get_resource_path(package, calibfilepath))+'/'
             modslnam = self.action.args.ccddata.header['MODSLNAM']
             dsprsnam = self.action.args.ccddata.header['DSPRSNAM']
             filter = self.action.args.ccddata.header['FILTER']
@@ -84,39 +82,18 @@ class SpectralExtractOptimal(BasePrimitive):
                     "Skipping spectral extraction.")
                 return self.action.args
 
-            elif ifsmode=='LowRes-K':
-                rmat_opt = self.context.OPT_rmat_LowRes_K
-                lenslet_grid = self.context.lowres_lenslet_grid
-            elif ifsmode=='LowRes-L':
-                rmat_opt = self.context.OPT_rmat_LowRes_L
-                lenslet_grid = self.context.lowres_lenslet_grid
-            elif ifsmode=='LowRes-M':
-                rmat_opt = self.context.OPT_rmat_LowRes_M
-                lenslet_grid = self.context.lowres_lenslet_grid
-            elif ifsmode=='LowRes-KLM':
-                rmat_opt = self.context.OPT_rmat_LowRes_KLM
-                lenslet_grid = self.context.lowres_lenslet_grid
-            elif ifsmode=='LowRes-KL':
-                rmat_opt = self.context.OPT_rmat_LowRes_KL
-                lenslet_grid = self.context.lowres_lenslet_grid
-            elif ifsmode=='LowRes-Ls':
-                rmat_opt = self.context.OPT_rmat_LowRes_Ls
-                lenslet_grid = self.context.lowres_lenslet_grid
-            elif ifsmode=='MedRes-K':
-                rmat_opt = self.context.OPT_rmat_MedRes_K
-                lenslet_grid = self.context.medres_lenslet_grid
-            elif ifsmode=='MedRes-L':
-                rmat_opt = self.context.OPT_rmat_MedRes_L
-                lenslet_grid = self.context.medres_lenslet_grid
-            elif ifsmode=='MedRes-M':
-                rmat_opt =self.context.OPT_rmat_MedRes_M
-                lenslet_grid = self.context.medres_lenslet_grid
 
-            # Cube shape (nlam, ny, nx) comes from the rectmat itself: stored
-            # in it if it was written by save_rectmat, otherwise nlam is
-            # derived from its size and the lenslet grid.
-            R_matrix, FLUX_SHAPE_3D = scbasic.load_rectmat(
-                calib_path+rmat_opt, lenslet_grid=lenslet_grid)
+            # The rectmat comes from the caldb (use_caldb) or the calib
+            # directory. Its cube shape (nlam, ny, nx) and wavelengths come
+            # from the file; lenslet_grid is only used for legacy .npz
+            # rectmats that do not store their cube shape.
+            lenslet_grid = (self.context.medres_lenslet_grid if ifsmode.startswith('MedRes')
+                            else self.context.lowres_lenslet_grid)
+            rmat_opt = calib_resolve.resolve_rectmat(
+                self.config, self.context, 'OPT', ifsmode,
+                self.action.args.ccddata.header, logger=self.logger)
+            rect_opt = rectmat_io.read_rectmat(rmat_opt, lenslet_grid=lenslet_grid)
+            R_matrix, FLUX_SHAPE_3D = rect_opt.matrix, rect_opt.cube_shape
             self.logger.info(f"Cube shape {FLUX_SHAPE_3D} from {rmat_opt}")
 
             existing_l1_name = scbasic.find_existing_proc_file(
@@ -173,7 +150,8 @@ class SpectralExtractOptimal(BasePrimitive):
 
             wcs, wave_info = scbasic.create_scales_wcs(
                 cube_shape=A_opt.shape,
-                header=self.action.args.ccddata.header)
+                header=self.action.args.ccddata.header,
+                wavelengths=rect_opt.wavelengths)
 
             header_copy = self.action.args.ccddata.header
             
@@ -205,14 +183,16 @@ class SpectralExtractOptimal(BasePrimitive):
 
             self.action.args.ccddata.data = A_opt
             self.action.args.ccddata.header.update(final_header)
-            self.action.args.ccddata.header['HISTORY'] = 'WCS keywords updated (purely linear).'
+            self.action.args.ccddata.header['HISTORY'] = (
+                f"WCS keywords updated ({wave_info['WAVEGRID'].lower()} wavelength axis).")
             self.action.args.ccddata.header['HISTORY'] = (f'Optimal extraction performed using {os.path.basename(rmat_opt)}')
             
             scales_fits_writer(ccddata = opt_rslt,
                 table=self.action.args.table,
                 output_file=self.action.args.name,
                 output_dir=self.config.instrument.output_directory,
-                suffix="opt_L2")
+                suffix="opt_L2",
+                extra_hdus=scbasic.wavelength_extra_hdus(wave_info))
 
             scbasic.proctab_update(
                 header=self.action.args.ccddata.header,

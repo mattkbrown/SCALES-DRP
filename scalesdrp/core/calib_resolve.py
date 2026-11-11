@@ -37,13 +37,19 @@ _stores = {}
 
 def caldb_settings(config):
     inst = getattr(config, "instrument", config)
+
+    def get(key, default):
+        # ConfigClass returns None for keys missing from the .cfg
+        value = getattr(inst, key, None)
+        return default if value is None else value
+
     return {
-        "use_caldb": bool(getattr(inst, "use_caldb", False)),
-        "url": getattr(inst, "caldb_url", "") or "",
-        "cache_dir": getattr(inst, "caldb_cache_dir", "") or None,
-        "offline": bool(getattr(inst, "caldb_offline", False)),
-        "ttl": float(getattr(inst, "caldb_ttl", 3600)),
-        "match_stateid": bool(getattr(inst, "caldb_match_stateid", False)),
+        "use_caldb": bool(get("use_caldb", False)),
+        "url": get("caldb_url", "") or "",
+        "cache_dir": get("caldb_cache_dir", "") or None,
+        "offline": bool(get("caldb_offline", False)),
+        "ttl": float(get("caldb_ttl", 3600)),
+        "match_stateid": bool(get("caldb_match_stateid", False)),
     }
 
 
@@ -147,3 +153,30 @@ def resolve_bpm(config, context, header, logger=None):
     return resolve(config, context, "bpm", header, local_name=local_name,
                    instrument_mode=None, read_mode=str(header.get("MCLOCK", "")).strip() or None,
                    detector=detector, logger=logger)
+
+
+def resolve_bpmat(config, context, header, bpm_path, use_rectmat=True, logger=None):
+    """
+    The bad-pixel matrix for a frame, built from bpm_path and, for IFS
+    frames with a known mode and use_rectmat, the mode's OPT rectmat (see
+    scalesdrp.core.bpmat). Cached after the first build.
+
+    Calibration frames taken before a rectmat exists pass use_rectmat=False,
+    or simply get the BPM-only bpmat if no rectmat is found.
+    """
+    from scalesdrp.core import bpmat
+    logger = logger or log
+    rect_path, lenslet_grid = None, None
+    camera = str(header.get("CAMERA", "")).strip().upper()
+    if use_rectmat and DETECTORS.get(camera) == "IFS":
+        from scalesdrp.primitives.scales_basic import select_ifsmode
+        ifsmode = select_ifsmode(header.get("MODSLNAM"), header.get("DSPRSNAM"), header.get("FILTER"))
+        if ifsmode:
+            try:
+                rect_path = resolve_rectmat(config, context, "OPT", ifsmode, header, logger)
+            except FileNotFoundError as e:
+                logger.warning(f"{e} Building the bpmat from the bad pixel mask alone.")
+            grid_key = "medres_lenslet_grid" if ifsmode.startswith("MedRes") else "lowres_lenslet_grid"
+            lenslet_grid = getattr(context, grid_key, None)
+    return bpmat.get_bpmat(bpm_path, rect_path, cache_dir=caldb_settings(config)["cache_dir"],
+                           lenslet_grid=lenslet_grid, logger=logger)

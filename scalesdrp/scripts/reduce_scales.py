@@ -241,7 +241,6 @@ def main():
     framework.context.calib_file_path = scales_config.calib_file_path
 
     framework.context.bpm_ifs = scales_config.bpm_ifs
-    framework.context.bpmat_ifs = scales_config.bpmat_ifs
     framework.context.flat_ifs_fast0p6 = scales_config.flat_ifs_fast0p6
     framework.context.sig_map_ifs_fast0p6 = scales_config.sig_map_ifs_fast0p6
     framework.context.lin_coeff_ifs_fast0p6 = scales_config.lin_coeff_ifs_fast0p6
@@ -273,7 +272,6 @@ def main():
     framework.context.gain_img_fast0p6 = scales_config.gain_img_fast0p6
 
     framework.context.bpm_img = scales_config.bpm_img
-    framework.context.bpmat_img = scales_config.bpmat_img
     framework.context.flat_img_fast1 = scales_config.flat_img_fast1
     framework.context.sig_map_img_fast1 = scales_config.sig_map_img_fast1
     framework.context.lin_coeff_img_fast1 = scales_config.lin_coeff_img_fast1

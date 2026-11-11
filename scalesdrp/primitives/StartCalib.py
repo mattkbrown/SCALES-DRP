@@ -9,6 +9,7 @@ import scalesdrp.primitives.saturation_correct as saturation_correct
 from scalesdrp.primitives.scales_file_primitives import fits_writer_calib
 from scalesdrp.core.scales_proctab import Proctab
 from scalesdrp.core.scales_pkg_resources import get_resource_path
+from scalesdrp.core import calib_resolve
 from scalesdrp.core.matplot_plotting import mpl_plot, mpl_clear
 import scalesdrp.primitives.scales_basic as scbasic
 import pandas as pd
@@ -88,10 +89,13 @@ class StartCalib(BasePrimitive):
         calib_path = str(get_resource_path(package, calibfilepath))+'/'
         plot_dir = self.config.instrument.plot_directory
 
+        header = self.action.args.ccddata.header
+        if obsmode in ('Im', 'IFS'):
+            # The BPM comes from the caldb (use_caldb) or the calib directory
+            bpm = calib_resolve.resolve_bpm(self.config, self.context, header, logger=self.logger)
+            master_bpm = fits.getdata(bpm)
+
         if obsmode =='Im':
-            rmat1 = sparse.load_npz(calib_path+self.context.bpmat_img)
-            bpm = self.context.bpm_img
-            master_bpm = fits.getdata(calib_path+bpm)
 
             if det_config =='5.0 MHz':  #fast1.0
                 lin_coeff = calib_path+self.context.lin_coeff_img_fast1
@@ -143,9 +147,6 @@ class StartCalib(BasePrimitive):
                     sat_map = np.asarray(hdul["SATURATION"].data, dtype=float)
 
         elif obsmode =='IFS':
-            rmat1 = sparse.load_npz(calib_path+self.context.bpmat_ifs)
-            bpm = self.context.bpm_ifs
-            master_bpm = fits.getdata(calib_path+bpm)
 
             if det_config =='5.0 MHz':  #fast1.0
                 lin_coeff = calib_path+self.context.lin_coeff_ifs_fast1
@@ -416,6 +417,10 @@ class StartCalib(BasePrimitive):
             self.action.args.ccddata.chisq = chisq
 
         if self.config.instrument.apply_bpm == True:
+            # Calibration frames (including the monochromator frames rectmats
+            # are built from) get the BPM-only bpmat; cached after first use
+            rmat1 = calib_resolve.resolve_bpmat(self.config, self.context, header, bpm,
+                                                use_rectmat=False, logger=self.logger)
             final_ramp1 = rmat1*np.matrix(final_slope.flatten().reshape([np.prod(final_slope.shape),1]))
             final_ramp = np.array(final_ramp1).reshape(final_slope.shape)
 

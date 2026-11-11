@@ -13,6 +13,7 @@ from tqdm import tqdm
 from astropy.nddata import StdDevUncertainty
 from scalesdrp.core.scales_proctab import Proctab
 from scalesdrp.core.scales_pkg_resources import get_resource_path
+from scalesdrp.core import calib_resolve
 import logging
 log = logging.getLogger("SCALES")
 pt = Proctab(logger=log)
@@ -71,10 +72,13 @@ class RampFit(BasePrimitive):
             plot_dir = self.config.instrument.plot_directory
             calibfilepath = self.context.calib_file_path
             calib_path = str(get_resource_path(package, calibfilepath))+'/'
+            header = self.action.args.ccddata.header
+            if obsmode in ('Im', 'IFS'):
+                # The BPM comes from the caldb (use_caldb) or the calib directory
+                bpm = calib_resolve.resolve_bpm(self.config, self.context, header, logger=self.logger)
+                master_bpm = fits.getdata(bpm)
+
             if obsmode =='Im':
-                rmat1 = sparse.load_npz(calib_path+self.context.bpmat_img)
-                bpm = self.context.bpm_img
-                master_bpm = fits.getdata(calib_path+bpm)
 
                 if det_config =='5.0 MHz':  #fast1.0
                     readnoise = self.context.sig_map_img_fast1
@@ -122,9 +126,6 @@ class RampFit(BasePrimitive):
                         sat_map = np.asarray(hdul["SATURATION"].data, dtype=float)
 
             elif obsmode =='IFS':
-                rmat1 = sparse.load_npz(calib_path+self.context.bpmat_ifs)
-                bpm = self.context.bpm_ifs
-                master_bpm = fits.getdata(calib_path+bpm)
 
                 if det_config =='5.0 MHz':  #fast1.0
                     readnoise = self.context.sig_map_ifs_fast1
@@ -275,6 +276,9 @@ class RampFit(BasePrimitive):
 
             if self.config.instrument.apply_bpm == True:
                 self.logger.info("+++++++++++ Bad pixel correction started +++++++++++")
+                # Built from the BPM and, for IFS frames, the mode's rectmat; cached
+                rmat1 = calib_resolve.resolve_bpmat(self.config, self.context, header, bpm,
+                                                    logger=self.logger)
                 final_ramp1 = rmat1*np.matrix(final_slope.flatten().reshape([np.prod(final_slope.shape),1]))
                 final_ramp = np.array(final_ramp1).reshape(final_slope.shape)
 

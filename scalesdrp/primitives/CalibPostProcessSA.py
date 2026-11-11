@@ -445,9 +445,8 @@ class CalibPostProcessSA(BasePrimitive):
                         data=combined_dq.astype(np.uint16),
                         name="DQ"),]).writeto(bpm_output_path,overwrite=True)
 
-                rmat_output_path = os.path.join(calib_dir,self.config.instrument.bpm_ifs)
-                rmat = bpm_create.bpm_correction(combined_bpm)
-                sparse.save_npz(rmat_output_path,rmat)
+                # No bpmat is written: the DRP builds it from this BPM (and the
+                # rectmat, for IFS science frames) when it is used, and caches it.
 
                 os.makedirs(plot_dir, exist_ok=True)
                 diagnostics = bpm_create.plot_bpm_diagnostics(
@@ -533,9 +532,8 @@ class CalibPostProcessSA(BasePrimitive):
                         data=combined_dq.astype(np.uint16),
                         name="DQ"),]).writeto(bpm_output_path,overwrite=True)
 
-                rmat_output_path = os.path.join(calib_dir,self.config.instrument.bpm_img)
-                rmat = bpm_create.bpm_correction(combined_bpm)
-                sparse.save_npz(rmat_output_path,rmat)
+                # No bpmat is written: the DRP builds it from this BPM (and the
+                # rectmat, for IFS science frames) when it is used, and caches it.
                 os.makedirs(plot_dir, exist_ok=True)
                 diagnostics = bpm_create.plot_bpm_diagnostics(
                     dark_products=dark_products,
